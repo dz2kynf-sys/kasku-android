@@ -29,12 +29,14 @@
       }
       * { box-sizing: border-box; }
       @keyframes lift-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes auth-from-left { from { opacity: 0; transform: translateX(-22px); } to { opacity: 1; transform: translateX(0); } }
+      @keyframes auth-from-right { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } }
       body { margin: 0; min-width: 320px; background: var(--canvas); color: var(--ink); font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
       button, input, select { font: inherit; }
       button { cursor: pointer; }
       .hidden { display: none !important; }
       .auth-wrap { min-height: 100dvh; display: grid; grid-template-columns: minmax(320px, .92fr) 1.08fr; background: #fff; }
-      .auth-brand { padding: clamp(32px, 6vw, 82px); display: flex; flex-direction: column; justify-content: space-between; color: #fff; background: radial-gradient(ellipse at 18% 18%, #358d67, transparent 44%), linear-gradient(145deg, #0d5f42, #083d30); }
+      .auth-brand { padding: clamp(32px, 6vw, 82px); display: flex; flex-direction: column; justify-content: space-between; color: #fff; background: radial-gradient(ellipse at 18% 18%, #358d67, transparent 44%), linear-gradient(145deg, #0d5f42, #083d30); animation: auth-from-left .55s ease both; }
       .brand-lockup { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 750; letter-spacing: -.5px; }
       .brand-lockup, .mobile-app-header strong, .offline h1 { font-family: "Mochiy Pop One", ui-sans-serif, system-ui, sans-serif; font-weight: 400; }
       .brand-mark { width: 43px; height: 43px; display: grid; place-items: center; flex: none; border-radius: 15px; color: #17684d; background: #f0eee6; box-shadow: inset 0 0 0 1px #ffffff28; }
@@ -45,8 +47,8 @@
       .brand-copy h1 { margin: 0; max-width: 460px; font-size: clamp(38px, 5vw, 65px); line-height: 1.04; letter-spacing: -3px; }
       .brand-copy p { max-width: 400px; margin: 22px 0 0; color: #d1e6d9; font-size: 16px; line-height: 1.7; }
       .brand-foot { color: #c1d9cb; font-size: 12px; }
-      .auth-panel { display: grid; place-items: center; padding: 28px; }
-      .auth-card { width: min(100%, 410px); }
+      .auth-panel { display: grid; place-items: center; padding: 28px; animation: auth-from-right .55s ease both; }
+      .auth-card { width: min(100%, 410px); animation: lift-in .48s .08s ease both; }
       .auth-card h2 { margin: 0; font-size: 29px; letter-spacing: -1px; }
       .auth-subtitle { margin: 8px 0 28px; color: var(--muted); }
       .field { display: grid; gap: 7px; margin-bottom: 16px; }
@@ -58,6 +60,8 @@
       .primary-btn, .secondary-btn, .icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 12px; font-weight: 700; transition: transform .15s, background .15s; }
       .primary-btn { min-height: 46px; padding: 0 17px; color: #fff; background: var(--green); }
       .primary-btn:hover { background: var(--green-dark); }
+      .danger-btn { background: var(--red); }
+      .danger-btn:hover { background: #b23c31; }
       .primary-btn:active, .secondary-btn:active { transform: scale(.98); }
       .primary-btn:disabled { opacity: .6; cursor: wait; }
       .auth-submit { width: 100%; margin-top: 6px; }
@@ -155,8 +159,9 @@
       .progress-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #16825b, #70bf8d); transition: width .25s ease; }
       .payment-list { display: grid; gap: 9px; padding: 0 20px 19px; }
       .payment-row { display: flex; align-items: center; gap: 10px; padding: 11px; border: 1px solid #edf1ee; border-radius: 12px; }
-      .payment-delete { flex: none; color: var(--red); }
+      .payment-delete { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 9px; border: 1px solid #f1d9d6; border-radius: 9px; color: var(--red); background: #fff; font-size: 10px; font-weight: 700; }
       .payment-delete:hover { color: #b23c31; background: #fdf2f0; }
+      .payment-delete svg { width: 14px; height: 14px; }
       .check-wrap { width: 20px; height: 20px; display: grid; place-items: center; flex: none; }
       .check-wrap input { width: 17px; height: 17px; margin: 0; accent-color: var(--green); cursor: pointer; }
       .payment-info { min-width: 0; flex: 1; }
@@ -412,6 +417,13 @@
         <div class="modal-actions"><button class="secondary-btn" type="button" data-close="payment-modal">Batal</button><button id="save-payment" class="primary-btn" type="submit">Tambah iuran</button></div>
       </form>
     </div>
+    <div id="delete-payment-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-payment-title">
+      <div class="modal">
+        <div class="modal-head"><div><h2 id="delete-payment-title">Hapus iuran?</h2><p id="delete-payment-message"></p></div><button class="modal-close" type="button" data-close="delete-payment-modal" aria-label="Tutup">×</button></div>
+        <p id="delete-payment-error" class="error-msg" role="alert"></p>
+        <div class="modal-actions"><button class="secondary-btn" type="button" data-close="delete-payment-modal">Batal</button><button id="confirm-delete-payment" class="primary-btn danger-btn" type="button">Hapus iuran</button></div>
+      </div>
+    </div>
     <div id="toast" class="toast hidden" role="status"></div>
 
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
@@ -422,7 +434,7 @@
     <script>
       (function () {
         const $ = id => document.getElementById(id);
-        const state = { token: '', user: null, data: null, authMode: 'login', transactionType: 'expense', page: 'dashboard' };
+        const state = { token: '', user: null, data: null, authMode: 'login', transactionType: 'expense', page: 'dashboard', paymentToDelete: null };
         const memberCharacters = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
         const defaultMemberCharacter = memberCharacters[0];
         const money = value => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'EGP', maximumFractionDigits: 0 }).format(value || 0);
@@ -847,22 +859,15 @@
             if (!compact) {
               const deleteButton = document.createElement('button');
               deleteButton.type = 'button';
-              deleteButton.className = 'icon-btn payment-delete';
+              deleteButton.className = 'payment-delete';
               deleteButton.setAttribute('aria-label', 'Hapus iuran ' + item.name);
-              deleteButton.title = 'Hapus iuran';
               deleteButton.innerHTML = icon('<path d="M4 7h16"/><path d="M10 11v6m4-6v6"/><path d="m5 7 1 13h12l1-13"/><path d="M9 7V4h6v3"/>');
-              deleteButton.addEventListener('click', async () => {
-                if (!window.confirm('Hapus iuran "' + item.name + '" dari daftar rumah?')) return;
-                deleteButton.disabled = true;
-                try {
-                  await callApi('apiDeletePaymentItem', [state.token, item.id]);
-                  await refresh();
-                  showToast('Iuran berhasil dihapus.');
-                } catch (error) {
-                  showToast(error.message);
-                } finally {
-                  deleteButton.disabled = false;
-                }
+              deleteButton.appendChild(document.createTextNode('Hapus'));
+              deleteButton.addEventListener('click', () => {
+                state.paymentToDelete = item;
+                $('delete-payment-message').textContent = 'Hapus iuran "' + item.name + '" dari daftar rumah?';
+                displayError('delete-payment-error', '');
+                $('delete-payment-modal').classList.remove('hidden');
               });
               row.appendChild(deleteButton);
             }
@@ -1162,6 +1167,24 @@
             showToast('Jenis iuran berhasil ditambahkan.');
           } catch (error) {
             displayError('payment-error', error.message);
+          } finally {
+            button.disabled = false;
+          }
+        });
+        $('confirm-delete-payment').addEventListener('click', async () => {
+          const item = state.paymentToDelete;
+          if (!item) return;
+          const button = $('confirm-delete-payment');
+          button.disabled = true;
+          displayError('delete-payment-error', '');
+          try {
+            await callApi('apiDeletePaymentItem', [state.token, item.id]);
+            state.paymentToDelete = null;
+            $('delete-payment-modal').classList.add('hidden');
+            await refresh();
+            showToast('Iuran berhasil dihapus.');
+          } catch (error) {
+            displayError('delete-payment-error', error.message);
           } finally {
             button.disabled = false;
           }
