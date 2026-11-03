@@ -186,7 +186,7 @@
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
       }
-      .modal { width: min(100%, 450px); padding: 23px; border-radius: 19px; background: #fff; box-shadow: 0 24px 70px #0f332540; }
+      .modal { width: min(100%, 450px); max-height: calc(100vh - 36px); max-height: calc(100dvh - 36px); overflow-y: auto; overscroll-behavior: contain; padding: 23px; border-radius: 19px; background: #fff; box-shadow: 0 24px 70px #0f332540; }
       .modal-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 19px; }
       .modal-head h2 { margin: 0; font-size: 20px; letter-spacing: -.6px; }
       .modal-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
