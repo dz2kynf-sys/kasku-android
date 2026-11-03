@@ -75,6 +75,16 @@ function apiLogin(email, password) {
 
 function apiGetData(token) {
   const user = requireSession_(token);
+  const membershipsForUser = getHouseSheetData_('memberships')
+    .filter(row => String(row[1]) === user.id);
+  if (!membershipsForUser.length) {
+    const month = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
+    return {
+      user: { id: user.id, name: user.name, email: user.email, character: DEFAULT_MEMBER_CHARACTER },
+      household: null, households: [], members: [], month: month,
+      totals: { income: 0, expenses: 0, balance: 0 }, transactions: [], payments: []
+    };
+  }
   const household = requireHousehold_(token, user);
   const householdId = household.id;
   const userRows = getSheet_('users').getDataRange().getValues().slice(1);
@@ -157,7 +167,8 @@ function apiGetData(token) {
     user: {
       id: user.id, name: user.name, email: user.email,
       character: currentMembership && validMemberCharacter_(currentMembership[4])
-        ? String(currentMembership[4]) : DEFAULT_MEMBER_CHARACTER
+        ? String(currentMembership[4]) : DEFAULT_MEMBER_CHARACTER,
+      role: currentMembership ? String(currentMembership[2]) : ''
     },
     household: household,
     households: households,
@@ -220,8 +231,10 @@ function apiUpdateTransaction(token, transactionId, type, amount, purpose, date)
   try {
     const sheet = getSheet_('transactions');
     const rows = sheet.getDataRange().getValues();
+    const canManageAll = isHouseholdOwner_(household.id, user.id);
     const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
-      String(row[1]) === user.id && String(row[7]) === household.id);
+      (String(row[1]) === user.id || canManageAll) &&
+      String(row[7]) === household.id);
     if (index < 1) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
     sheet.getRange(index + 1, 3, 1, 4).setValues([[
       type, numericAmount, description, transactionDate
@@ -243,8 +256,10 @@ function apiDeleteTransaction(token, transactionId) {
   try {
     const sheet = getSheet_('transactions');
     const rows = sheet.getDataRange().getValues();
+    const canManageAll = isHouseholdOwner_(household.id, user.id);
     const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
-      String(row[1]) === user.id && String(row[7]) === household.id);
+      (String(row[1]) === user.id || canManageAll) &&
+      String(row[7]) === household.id);
     if (index < 1) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
     sheet.deleteRow(index + 1);
   } finally {
@@ -432,6 +447,52 @@ function apiSwitchHousehold(token, householdId) {
   return { success: true };
 }
 
+function apiLeaveHousehold(token) {
+  const user = requireSession_(token);
+  const householdId = String(user.activeHouseholdId || '');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('memberships');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 &&
+      String(row[0]) === householdId && String(row[1]) === user.id);
+    if (index < 1) throw new Error('Keanggotaan rumah tidak ditemukan.');
+    if (String(rows[index][2]) === 'owner') {
+      throw new Error('Pemilik rumah tidak dapat keluar agar rumah tidak kehilangan pengelola.');
+    }
+    sheet.deleteRow(index + 1);
+    const remaining = getHouseSheetData_('memberships').find(row => String(row[1]) === user.id);
+    setSessionHousehold_(token, user, remaining ? String(remaining[0]) : '');
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiKickMember(token, targetUserId) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(targetUserId || '');
+  if (!targetId || targetId === user.id) throw new Error('Anggota yang dipilih tidak valid.');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (!isHouseholdOwner_(household.id, user.id)) {
+      throw new Error('Hanya pemilik rumah yang dapat mengeluarkan anggota.');
+    }
+    const sheet = getSheet_('memberships');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 &&
+      String(row[0]) === household.id && String(row[1]) === targetId && String(row[2]) === 'member');
+    if (index < 1) throw new Error('Anggota tidak ditemukan atau tidak dapat dikeluarkan.');
+    sheet.deleteRow(index + 1);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
 function apiLogout(token) {
   if (token) CacheService.getScriptCache().remove('session:' + String(token));
   return { success: true };
@@ -556,6 +617,12 @@ function getHouseSheetData_(key) {
 function getHousehold_(householdId) {
   const row = getHouseSheetData_('households').find(item => String(item[0]) === householdId);
   return row ? { id: String(row[0]), name: String(row[1]), inviteCode: String(row[2]) } : null;
+}
+
+function isHouseholdOwner_(householdId, userId) {
+  return getHouseSheetData_('memberships').some(row =>
+    String(row[0]) === householdId && String(row[1]) === userId && String(row[2]) === 'owner'
+  );
 }
 
 function migrateLegacyData_(spreadsheet) {

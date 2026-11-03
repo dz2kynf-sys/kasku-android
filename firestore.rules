@@ -35,6 +35,12 @@ service cloud.firestore {
           || existsAfter(membershipPath(householdId, request.auth.uid)));
     }
 
+    function isOwner(householdId) {
+      return signedIn()
+        && exists(membershipPath(householdId, request.auth.uid))
+        && get(membershipPath(householdId, request.auth.uid)).data.role == 'owner';
+    }
+
     function validInvite(householdId, code) {
       return code is string
         && exists(invitePath(code))
@@ -111,7 +117,12 @@ service cloud.firestore {
         && isMember(resource.data.householdId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['character'])
         && validMemberCharacter(request.resource.data.character);
-      allow delete: if false;
+      allow delete: if signedIn()
+        && resource.data.role == 'member'
+        && (
+          resource.data.userId == request.auth.uid
+          || isOwner(resource.data.householdId)
+        );
     }
 
     match /inviteCodes/{code} {
@@ -150,7 +161,7 @@ service cloud.firestore {
         && isMember(resource.data.householdId)
         && request.resource.data.householdId == resource.data.householdId
         && request.resource.data.userId == resource.data.userId
-        && resource.data.userId == request.auth.uid
+        && (resource.data.userId == request.auth.uid || isOwner(resource.data.householdId))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['type', 'amount', 'purpose', 'date'])
         && request.resource.data.type in ['income', 'expense']
         && request.resource.data.amount is int
@@ -162,7 +173,7 @@ service cloud.firestore {
         && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
       allow delete: if signedIn()
         && isMember(resource.data.householdId)
-        && resource.data.userId == request.auth.uid;
+        && (resource.data.userId == request.auth.uid || isOwner(resource.data.householdId));
     }
 
     match /payments/{paymentId} {

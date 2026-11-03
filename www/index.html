@@ -135,8 +135,11 @@
       .household-member strong { font-size: 12px; }
       .household-member span { margin-top: 2px; color: var(--muted); font-size: 10px; }
       .household-member .member-role { flex: none; color: var(--green); }
+      .member-actions { display: flex; align-items: center; gap: 7px; }
       .secondary-btn { min-height: 36px; padding: 0 12px; border: 1px solid #e6ede8; color: #355643; background: #fff; font-size: 11px; }
       .secondary-btn:hover { background: #f5f8f6; }
+      .secondary-btn.danger-btn { border-color: #f1d4d1; color: #b23c31; background: #fff; }
+      .muted-copy { color: var(--muted); font-size: 10px; }
       .secondary-btn svg { width: 15px; height: 15px; }
       .transaction-list { padding: 0 20px 8px; }
       .transaction-row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-top: 1px solid #f0f3f1; }
@@ -364,14 +367,19 @@
         </section>
 
         <section id="page-household" class="page-section">
-          <div class="panel household-panel">
+          <div id="no-household-message" class="panel household-panel hidden">
+            <h2>Belum tergabung ke rumah</h2>
+            <p>Gabung dengan kode undangan atau buat rumah baru untuk mulai memakai KasKU.</p>
+          </div>
+          <div id="household-details" class="panel household-panel">
             <h2 id="household-name">Rumah</h2>
             <p>Bagikan kode ini agar akun lain bisa bergabung dan melihat catatan rumah yang sama.</p>
             <div class="invite-code"><code id="household-code"></code><button id="copy-household-code" class="secondary-btn" type="button">Salin kode</button></div>
             <div class="field" style="margin:18px 0 0"><label for="household-select">Rumah yang sedang dibuka</label><select id="household-select"></select></div>
+            <div class="modal-actions"><span id="owner-leave-copy" class="muted-copy hidden">Pemilik tidak dapat keluar agar rumah tidak kehilangan pengelola.</span><button id="leave-household" class="secondary-btn danger-btn hidden" type="button">Keluar dari rumah</button></div>
           </div>
           <div class="household-tools">
-            <div class="panel household-panel">
+            <div id="household-members-panel" class="panel household-panel">
               <h2>Anggota rumah</h2>
               <p>Akun yang dapat melihat transaksi dan daftar iuran rumah ini.</p>
               <div id="household-members" class="household-members"></div>
@@ -436,19 +444,27 @@
         <div class="modal-actions"><button class="secondary-btn" type="button" data-close="delete-payment-modal">Batal</button><button id="confirm-delete-payment" class="primary-btn danger-btn" type="button">Hapus iuran</button></div>
       </div>
     </div>
+    <div id="household-action-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="household-action-title">
+      <div class="modal">
+        <div class="modal-head"><div><h2 id="household-action-title">Konfirmasi</h2><p id="household-action-message"></p></div><button class="modal-close" type="button" data-close="household-action-modal" aria-label="Tutup">×</button></div>
+        <p id="household-action-error" class="error-msg" role="alert"></p>
+        <div class="modal-actions"><button class="secondary-btn" type="button" data-close="household-action-modal">Batal</button><button id="confirm-household-action" class="primary-btn danger-btn" type="button">Konfirmasi</button></div>
+      </div>
+    </div>
     <div id="toast" class="toast hidden" role="status"></div>
 
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
     <script src="./firebase-config.js"></script>
-    <script src="./firebase-api.js?v=shared-iuran-v2"></script>
+    <script src="./firebase-api.js?v=household-management-v1"></script>
     <script>
       (function () {
         const $ = id => document.getElementById(id);
         const state = {
           token: '', user: null, data: null, authMode: 'login', transactionType: 'expense', page: 'dashboard',
-          transactionToEdit: null, transactionToDelete: null, paymentToEdit: null, paymentToDelete: null
+          transactionToEdit: null, transactionToDelete: null, paymentToEdit: null, paymentToDelete: null,
+          memberToKick: null, householdAction: ''
         };
         const memberCharacters = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
         const defaultMemberCharacter = memberCharacters[0];
@@ -580,9 +596,8 @@
           const user = session && database.users.find(item => item.id === session.userId);
           if (!user) throw new Error('Sesi berakhir. Silakan masuk kembali.');
           const memberships = database.memberships.filter(item => item.userId === user.id);
-          if (!memberships.length) throw new Error('Akun ini belum tergabung ke rumah mana pun.');
           if (!memberships.some(item => item.householdId === session.householdId)) {
-            session.householdId = memberships[0].householdId;
+            session.householdId = memberships.length ? memberships[0].householdId : '';
             saveLocalDatabase(database);
           }
           return { user: user, householdId: session.householdId, session: session };
@@ -592,7 +607,7 @@
           const token = localId() + localId();
           database.sessions = database.sessions.filter(item => item.userId !== user.id);
           const membership = database.memberships.find(item => item.userId === user.id);
-          database.sessions.push({ token: token, userId: user.id, householdId: householdId || membership.householdId });
+          database.sessions.push({ token: token, userId: user.id, householdId: householdId || (membership && membership.householdId) || '' });
           saveLocalDatabase(database);
           return { token: token, user: { name: user.name, email: user.email } };
         }
@@ -664,9 +679,41 @@
             saveLocalDatabase(database);
             return { success: true };
           }
+          if (method === 'apiLeaveHousehold') {
+            const membership = database.memberships.find(item =>
+              item.householdId === householdId && item.userId === user.id
+            );
+            if (!membership) throw new Error('Keanggotaan rumah tidak ditemukan.');
+            if (membership.role === 'owner') throw new Error('Pemilik rumah tidak dapat keluar agar rumah tidak kehilangan pengelola.');
+            database.memberships = database.memberships.filter(item => item !== membership);
+            const remaining = database.memberships.find(item => item.userId === user.id);
+            session.session.householdId = remaining ? remaining.householdId : '';
+            saveLocalDatabase(database);
+            return { success: true };
+          }
+          if (method === 'apiKickMember') {
+            const targetId = String(args[1] || '');
+            const owner = database.memberships.find(item =>
+              item.householdId === householdId && item.userId === user.id && item.role === 'owner'
+            );
+            const target = database.memberships.find(item =>
+              item.householdId === householdId && item.userId === targetId && item.role === 'member'
+            );
+            if (!owner || !target || targetId === user.id) throw new Error('Anggota tidak ditemukan atau tidak dapat dikeluarkan.');
+            database.memberships = database.memberships.filter(item => item !== target);
+            saveLocalDatabase(database);
+            return { success: true };
+          }
           if (method === 'apiGetData') {
             const today = new Date();
             const month = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+            if (!householdId) {
+              return {
+                user: { id: user.id, name: user.name, email: user.email, character: user.character || defaultMemberCharacter },
+                household: null, households: [], members: [], month: month,
+                totals: { income: 0, expenses: 0, balance: 0 }, transactions: [], payments: []
+              };
+            }
             const household = database.households.find(item => item.id === householdId);
             if (!household) throw new Error('Data rumah tidak ditemukan.');
             const transactions = database.transactions
@@ -705,7 +752,10 @@
             const households = database.memberships.filter(item => item.userId === user.id)
               .map(item => database.households.find(home => home.id === item.householdId)).filter(Boolean);
             return {
-              user: { id: user.id, name: user.name, email: user.email, character: user.character || defaultMemberCharacter },
+              user: {
+                id: user.id, name: user.name, email: user.email, character: user.character || defaultMemberCharacter,
+                role: (database.memberships.find(item => item.userId === user.id && item.householdId === householdId) || {}).role
+              },
               household: { id: household.id, name: household.name, inviteCode: household.inviteCode },
               households: households.map(item => ({ id: item.id, name: item.name, inviteCode: item.inviteCode })),
               members: database.memberships.filter(item => item.householdId === householdId)
@@ -758,7 +808,10 @@
             const date = String(args[5] || '');
             const parsedDate = new Date(date + 'T00:00:00Z');
             const item = database.transactions.find(transaction =>
-              transaction.id === transactionId && transaction.householdId === householdId && transaction.userId === user.id
+              transaction.id === transactionId && transaction.householdId === householdId &&
+              (transaction.userId === user.id || database.memberships.some(membership =>
+                membership.householdId === householdId && membership.userId === user.id && membership.role === 'owner'
+              ))
             );
             if (!item) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
             if (type !== 'income' && type !== 'expense') throw new Error('Jenis transaksi tidak valid.');
@@ -772,7 +825,10 @@
           if (method === 'apiDeleteTransaction') {
             const transactionId = String(args[1] || '');
             const index = database.transactions.findIndex(transaction =>
-              transaction.id === transactionId && transaction.householdId === householdId && transaction.userId === user.id
+              transaction.id === transactionId && transaction.householdId === householdId &&
+              (transaction.userId === user.id || database.memberships.some(membership =>
+                membership.householdId === householdId && membership.userId === user.id && membership.role === 'owner'
+              ))
             );
             if (index < 0) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
             database.transactions.splice(index, 1);
@@ -937,7 +993,8 @@
             amount.className = 'transaction-amount ' + (item.type === 'income' ? 'in' : 'out');
             amount.textContent = (item.type === 'income' ? '+' : '−') + money(item.amount);
             row.append(marker, info, amount);
-            if (item.userId === state.data.user.id && !String(item.id).startsWith('payment-')) {
+            const canManage = item.userId === state.data.user.id || state.data.user.role === 'owner';
+            if (canManage && !String(item.id).startsWith('payment-')) {
               const actions = document.createElement('span');
               actions.className = 'transaction-actions';
               const editButton = document.createElement('button');
@@ -1100,8 +1157,18 @@
         }
 
         function renderHousehold(data) {
+          const hasHousehold = Boolean(data.household);
+          $('no-household-message').classList.toggle('hidden', hasHousehold);
+          $('household-details').classList.toggle('hidden', !hasHousehold);
+          $('household-members-panel').classList.toggle('hidden', !hasHousehold);
+          if (!hasHousehold) {
+            $('household-members').replaceChildren();
+            return;
+          }
           $('household-name').textContent = data.household.name;
           $('household-code').textContent = data.household.inviteCode;
+          $('leave-household').classList.toggle('hidden', data.user.role !== 'member');
+          $('owner-leave-copy').classList.toggle('hidden', data.user.role !== 'owner');
           const selector = $('household-select');
           selector.replaceChildren();
           data.households.forEach(household => {
@@ -1132,6 +1199,27 @@
             role.className = 'member-role';
             role.textContent = member.role === 'owner' ? 'Pemilik' : 'Anggota';
             row.append(character, info, role);
+            if (data.user.role === 'owner' && member.role === 'member') {
+              const removeButton = document.createElement('button');
+              removeButton.type = 'button';
+              removeButton.className = 'row-action danger';
+              removeButton.setAttribute('aria-label', 'Keluarkan ' + member.name + ' dari rumah');
+              removeButton.title = 'Keluarkan dari rumah';
+              removeButton.innerHTML = icon('<path d="M4 7h16"/><path d="M10 11v6m4-6v6"/><path d="m5 7 1 13h12l1-13"/><path d="M9 7V4h6v3"/>');
+              removeButton.addEventListener('click', () => {
+                state.memberToKick = member;
+                state.householdAction = 'kick';
+                $('household-action-title').textContent = 'Keluarkan anggota?';
+                $('household-action-message').textContent = 'Keluarkan ' + member.name + ' dari rumah ini? Mereka tidak lagi dapat melihat data rumah.';
+                $('confirm-household-action').textContent = 'Keluarkan anggota';
+                displayError('household-action-error', '');
+                $('household-action-modal').classList.remove('hidden');
+              });
+              const actions = document.createElement('span');
+              actions.className = 'member-actions';
+              actions.appendChild(removeButton);
+              row.appendChild(actions);
+            }
             if (member.userId === data.user.id) {
               const picker = document.createElement('select');
               picker.className = 'member-character-picker';
@@ -1175,6 +1263,14 @@
           $('profile-name').textContent = state.data.user.name;
           $('profile-email').textContent = state.data.user.email;
           $('avatar').textContent = state.data.user.character || defaultMemberCharacter;
+          if (!state.data.household) {
+            $('greeting').textContent = 'Halo, ' + state.data.user.name.split(/\s+/)[0] + '. Gabung atau buat rumah untuk mulai.';
+            document.querySelectorAll('[data-page]').forEach(button => button.classList.toggle('hidden', button.dataset.page !== 'household'));
+            setPage('household', false);
+            renderHousehold(state.data);
+            return;
+          }
+          document.querySelectorAll('[data-page]').forEach(button => button.classList.remove('hidden'));
           $('greeting').textContent = 'Halo, ' + state.data.user.name.split(/\s+/)[0] +
             '. Rumah: ' + state.data.household.name + (isGoogleSheets || isFirebase ? '.' : ' — data hanya di perangkat ini.');
           const date = new Date(state.data.month + '-01T00:00:00');
@@ -1196,14 +1292,14 @@
           render();
         }
 
-        function setPage(page) {
+        function setPage(page, shouldRefresh) {
           state.page = page;
           document.querySelectorAll('.page-section').forEach(section => section.classList.toggle('active', section.id === 'page-' + page));
           document.querySelectorAll('[data-page]').forEach(button => button.classList.toggle('active', button.dataset.page === page));
           $('page-title').textContent = page === 'payments' ? 'Iuran rumah' :
             page === 'transactions' ? 'Transaksi' : page === 'household' ? 'Rumah & akun' : 'Ringkasan';
           $('add-transaction').classList.toggle('hidden', page === 'payments' || page === 'household');
-          if (state.token) refresh().catch(error => showToast(error.message));
+          if (state.token && shouldRefresh !== false) refresh().catch(error => showToast(error.message));
         }
 
         document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
@@ -1224,6 +1320,38 @@
             showToast('Kode undangan disalin.');
           } catch (error) {
             showToast('Kode undangan: ' + state.data.household.inviteCode);
+          }
+        });
+        $('leave-household').addEventListener('click', () => {
+          state.householdAction = 'leave';
+          state.memberToKick = null;
+          $('household-action-title').textContent = 'Keluar dari rumah?';
+          $('household-action-message').textContent = 'Kamu tidak lagi dapat melihat transaksi dan iuran rumah ini.';
+          $('confirm-household-action').textContent = 'Keluar dari rumah';
+          displayError('household-action-error', '');
+          $('household-action-modal').classList.remove('hidden');
+        });
+        $('confirm-household-action').addEventListener('click', async () => {
+          const button = $('confirm-household-action');
+          button.disabled = true;
+          displayError('household-action-error', '');
+          try {
+            if (state.householdAction === 'leave') {
+              await callApi('apiLeaveHousehold', [state.token]);
+            } else if (state.householdAction === 'kick' && state.memberToKick) {
+              await callApi('apiKickMember', [state.token, state.memberToKick.userId]);
+            } else {
+              throw new Error('Aksi rumah tidak valid.');
+            }
+            $('household-action-modal').classList.add('hidden');
+            state.householdAction = '';
+            state.memberToKick = null;
+            await refresh();
+            showToast(state.data.household ? 'Keanggotaan rumah diperbarui.' : 'Kamu sudah keluar dari rumah. Gabung atau buat rumah lain untuk melanjutkan.');
+          } catch (error) {
+            displayError('household-action-error', error.message);
+          } finally {
+            button.disabled = false;
           }
         });
         $('join-household-form').addEventListener('submit', async event => {

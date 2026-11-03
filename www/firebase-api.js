@@ -173,7 +173,15 @@
         const profile = profileSnapshot.data();
         const membershipsSnapshot = await db.collection('memberships').where('userId', '==', user.uid).get();
         const memberships = membershipsSnapshot.docs.map(document => document.data());
-        if (!memberships.length) throw new Error('Akun ini belum tergabung ke rumah mana pun.');
+        if (!memberships.length) {
+          global.localStorage.removeItem('kasku_active_household_' + user.uid);
+          const date = new Date();
+          return {
+            user: { id: user.uid, name: profile.name, email: user.email, character: profile.character || defaultMemberCharacter },
+            household: null, households: [], members: [], month: date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0'),
+            totals: { income: 0, expenses: 0, balance: 0 }, transactions: [], payments: []
+          };
+        }
 
         const savedHouseholdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
         let householdId = memberships.some(item => item.householdId === savedHouseholdId)
@@ -247,7 +255,10 @@
         }));
 
         return {
-          user: { id: user.uid, name: profile.name, email: user.email, character: profile.character || defaultMemberCharacter },
+          user: {
+            id: user.uid, name: profile.name, email: user.email, character: profile.character || defaultMemberCharacter,
+            role: members.find(member => member.userId === user.uid).role
+          },
           household: { id: householdId, name: household.name, inviteCode: household.inviteCode },
           households: households.filter(Boolean).map(item => ({ id: item.id, name: item.name, inviteCode: item.inviteCode })),
           members: memberSnapshot.docs.map(document => {
@@ -305,8 +316,10 @@
         const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
         const transactionRef = db.collection('transactions').doc(transactionId);
         const transaction = await transactionRef.get();
-        if (!transaction.exists || transaction.data().householdId !== householdId || transaction.data().userId !== user.uid) {
-          throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+        const membership = await db.collection('memberships').doc(householdId + '_' + user.uid).get();
+        if (!transaction.exists || transaction.data().householdId !== householdId ||
+            (transaction.data().userId !== user.uid && (!membership.exists || membership.data().role !== 'owner'))) {
+          throw new Error('Transaksi tidak ditemukan atau tidak dapat diubah.');
         }
         await transactionRef.update({ type: type, amount: amount, purpose: purpose, date: date });
         return { success: true };
@@ -318,8 +331,10 @@
         const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
         const transactionRef = db.collection('transactions').doc(transactionId);
         const transaction = await transactionRef.get();
-        if (!transaction.exists || transaction.data().householdId !== householdId || transaction.data().userId !== user.uid) {
-          throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+        const membership = await db.collection('memberships').doc(householdId + '_' + user.uid).get();
+        if (!transaction.exists || transaction.data().householdId !== householdId ||
+            (transaction.data().userId !== user.uid && (!membership.exists || membership.data().role !== 'owner'))) {
+          throw new Error('Transaksi tidak ditemukan atau tidak dapat dihapus.');
         }
         await transactionRef.delete();
         return { success: true };
@@ -442,6 +457,35 @@
         const membership = await db.collection('memberships').doc(targetId + '_' + user.uid).get();
         if (!membership.exists) throw new Error('Kamu bukan anggota rumah tersebut.');
         global.localStorage.setItem('kasku_active_household_' + user.uid, targetId);
+        return { success: true };
+      }
+
+      if (method === 'apiLeaveHousehold') {
+        const householdId = String(global.localStorage.getItem('kasku_active_household_' + user.uid) || '');
+        const membershipRef = db.collection('memberships').doc(householdId + '_' + user.uid);
+        const membership = await membershipRef.get();
+        if (!membership.exists) throw new Error('Keanggotaan rumah tidak ditemukan.');
+        if (membership.data().role === 'owner') throw new Error('Pemilik rumah tidak dapat keluar agar rumah tidak kehilangan pengelola.');
+        await membershipRef.delete();
+        const remaining = await db.collection('memberships').where('userId', '==', user.uid).get();
+        if (remaining.empty) {
+          global.localStorage.removeItem('kasku_active_household_' + user.uid);
+        } else {
+          global.localStorage.setItem('kasku_active_household_' + user.uid, remaining.docs[0].data().householdId);
+        }
+        return { success: true };
+      }
+
+      if (method === 'apiKickMember') {
+        const householdId = String(global.localStorage.getItem('kasku_active_household_' + user.uid) || '');
+        const targetId = String(args[1] || '');
+        if (!targetId || targetId === user.uid) throw new Error('Anggota yang dipilih tidak valid.');
+        const owner = await db.collection('memberships').doc(householdId + '_' + user.uid).get();
+        if (!owner.exists || owner.data().role !== 'owner') throw new Error('Hanya pemilik rumah yang dapat mengeluarkan anggota.');
+        const targetRef = db.collection('memberships').doc(householdId + '_' + targetId);
+        const target = await targetRef.get();
+        if (!target.exists || target.data().role !== 'member') throw new Error('Anggota tidak ditemukan atau tidak dapat dikeluarkan.');
+        await targetRef.delete();
         return { success: true };
       }
 
