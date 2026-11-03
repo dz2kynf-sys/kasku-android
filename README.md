@@ -53,6 +53,8 @@ Jika login ditolak, pastikan Email/Password aktif di Firebase Authentication dan
 
 Status pembayaran iuran terlihat oleh seluruh anggota rumah. Setiap anggota menandai pembayaran sendiri; nominal yang ditandai lunas masuk ke saldo sebagai pemasukan dan tampil di riwayat transaksi. Data diperbarui saat membuka halaman atau kembali ke tab aplikasi.
 
+Transaksi manual dapat diedit atau dihapus oleh pembuatnya. Jenis dan nominal iuran dapat diedit untuk pembayaran berikutnya; pembayaran yang sudah ditandai lunas tetap memakai nominal yang tercatat saat itu.
+
 Firebase Auth dan Google Sheets adalah mode terpisah: halaman Apps Script tetap memakai spreadsheet, sedangkan APK dan server lokal memakai Firebase. Akun serta data lokal lama tidak otomatis dipindahkan ke Firebase; pengguna perlu membuat akun Firebase di aplikasi.
 
 ## Aplikasi Android

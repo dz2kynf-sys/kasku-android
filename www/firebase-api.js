@@ -287,6 +287,44 @@
         return { success: true };
       }
 
+      if (method === 'apiUpdateTransaction') {
+        const transactionId = String(args[1] || '');
+        const type = args[2];
+        const amount = Number(args[3]);
+        const purpose = validName(args[4], 'Keterangan', 2, 160);
+        const date = String(args[5] || '');
+        const parsedDate = new Date(date + 'T00:00:00Z');
+        if (!/^[\w-]{1,80}$/.test(transactionId)) throw new Error('Transaksi tidak valid.');
+        if (type !== 'income' && type !== 'expense') throw new Error('Jenis transaksi tidak valid.');
+        if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000000000) {
+          throw new Error('Nominal harus berupa jumlah EGP positif.');
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+          throw new Error('Tanggal transaksi tidak valid.');
+        }
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const transactionRef = db.collection('transactions').doc(transactionId);
+        const transaction = await transactionRef.get();
+        if (!transaction.exists || transaction.data().householdId !== householdId || transaction.data().userId !== user.uid) {
+          throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+        }
+        await transactionRef.update({ type: type, amount: amount, purpose: purpose, date: date });
+        return { success: true };
+      }
+
+      if (method === 'apiDeleteTransaction') {
+        const transactionId = String(args[1] || '');
+        if (!/^[\w-]{1,80}$/.test(transactionId)) throw new Error('Transaksi tidak valid.');
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const transactionRef = db.collection('transactions').doc(transactionId);
+        const transaction = await transactionRef.get();
+        if (!transaction.exists || transaction.data().householdId !== householdId || transaction.data().userId !== user.uid) {
+          throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+        }
+        await transactionRef.delete();
+        return { success: true };
+      }
+
       if (method === 'apiTogglePayment') {
         const itemId = String(args[1] || '');
         const month = String(args[2] || '');
@@ -320,6 +358,24 @@
           id: paymentRef.id, name: name, amount: amount, active: true,
           createdAt: new Date().toISOString(), householdId: householdId, createdBy: user.uid
         });
+        return { success: true };
+      }
+
+      if (method === 'apiUpdatePaymentItem') {
+        const itemId = String(args[1] || '');
+        const name = validName(args[2], 'Nama pembayaran', 2, 60);
+        const amount = Number(args[3]);
+        if (!/^[\w-]{1,80}$/.test(itemId)) throw new Error('Item pembayaran tidak valid.');
+        if (!Number.isSafeInteger(amount) || amount < 0 || amount > 1000000000000) {
+          throw new Error('Nominal pembayaran tidak valid.');
+        }
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const paymentRef = db.collection('payments').doc(itemId);
+        const payment = await paymentRef.get();
+        if (!payment.exists || payment.data().householdId !== householdId || payment.data().active === false) {
+          throw new Error('Item pembayaran tidak ditemukan.');
+        }
+        await paymentRef.update({ name: name, amount: amount });
         return { success: true };
       }
 

@@ -150,6 +150,12 @@
       .transaction-amount { white-space: nowrap; font-size: 12px; font-weight: 750; }
       .transaction-amount.in { color: var(--green); }
       .transaction-amount.out { color: #455149; }
+      .transaction-actions, .payment-actions { display: flex; align-items: center; gap: 5px; flex: none; }
+      .row-action { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border: 1px solid #e6ede8; border-radius: 9px; color: #536158; background: #fff; }
+      .row-action:hover { background: #f5f8f6; }
+      .row-action.danger { border-color: #f1d9d6; color: var(--red); }
+      .row-action.danger:hover { background: #fdf2f0; }
+      .row-action svg { width: 15px; height: 15px; }
       .empty { padding: 35px 20px 39px; color: #89948d; text-align: center; font-size: 12px; }
       .empty strong { display: block; margin-bottom: 5px; color: #47574d; font-size: 13px; }
       .payment-summary { padding: 0 20px 20px; }
@@ -159,9 +165,7 @@
       .progress-fill { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #16825b, #70bf8d); transition: width .25s ease; }
       .payment-list { display: grid; gap: 9px; padding: 0 20px 19px; }
       .payment-row { display: flex; align-items: center; gap: 10px; padding: 11px; border: 1px solid #edf1ee; border-radius: 12px; }
-      .payment-delete { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 9px; border: 1px solid #f1d9d6; border-radius: 9px; color: var(--red); background: #fff; font-size: 10px; font-weight: 700; }
-      .payment-delete:hover { color: #b23c31; background: #fdf2f0; }
-      .payment-delete svg { width: 14px; height: 14px; }
+      .payment-edit { color: #536158; }
       .check-wrap { width: 20px; height: 20px; display: grid; place-items: center; flex: none; }
       .check-wrap input { width: 17px; height: 17px; margin: 0; accent-color: var(--green); cursor: pointer; }
       .payment-info { min-width: 0; flex: 1; }
@@ -411,12 +415,19 @@
 
     <div id="payment-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
       <form id="payment-form" class="modal">
-        <div class="modal-head"><div><h2 id="payment-modal-title">Tambah jenis iuran</h2><p>Item baru akan muncul untuk semua anggota rumah.</p></div><button class="modal-close" type="button" data-close="payment-modal" aria-label="Tutup">×</button></div>
+        <div class="modal-head"><div><h2 id="payment-modal-title">Tambah jenis iuran</h2><p id="payment-modal-copy">Item baru akan muncul untuk semua anggota rumah.</p></div><button class="modal-close" type="button" data-close="payment-modal" aria-label="Tutup">×</button></div>
         <div class="field"><label for="payment-name">Nama iuran</label><input id="payment-name" maxlength="60" required placeholder="Contoh: Keamanan"></div>
         <div class="field"><label for="payment-amount">Nominal EGP (opsional)</label><input id="payment-amount" type="number" min="0" step="1" max="1000000000000" placeholder="0"></div>
         <p id="payment-error" class="error-msg" role="alert"></p>
         <div class="modal-actions"><button class="secondary-btn" type="button" data-close="payment-modal">Batal</button><button id="save-payment" class="primary-btn" type="submit">Tambah iuran</button></div>
       </form>
+    </div>
+    <div id="delete-transaction-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-transaction-title">
+      <div class="modal">
+        <div class="modal-head"><div><h2 id="delete-transaction-title">Hapus transaksi?</h2><p id="delete-transaction-message"></p></div><button class="modal-close" type="button" data-close="delete-transaction-modal" aria-label="Tutup">×</button></div>
+        <p id="delete-transaction-error" class="error-msg" role="alert"></p>
+        <div class="modal-actions"><button class="secondary-btn" type="button" data-close="delete-transaction-modal">Batal</button><button id="confirm-delete-transaction" class="primary-btn danger-btn" type="button">Hapus transaksi</button></div>
+      </div>
     </div>
     <div id="delete-payment-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-payment-title">
       <div class="modal">
@@ -435,7 +446,10 @@
     <script>
       (function () {
         const $ = id => document.getElementById(id);
-        const state = { token: '', user: null, data: null, authMode: 'login', transactionType: 'expense', page: 'dashboard', paymentToDelete: null };
+        const state = {
+          token: '', user: null, data: null, authMode: 'login', transactionType: 'expense', page: 'dashboard',
+          transactionToEdit: null, transactionToDelete: null, paymentToEdit: null, paymentToDelete: null
+        };
         const memberCharacters = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
         const defaultMemberCharacter = memberCharacters[0];
         const money = value => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'EGP', maximumFractionDigits: 0 }).format(value || 0);
@@ -736,6 +750,35 @@
             saveLocalDatabase(database);
             return { success: true };
           }
+          if (method === 'apiUpdateTransaction') {
+            const transactionId = String(args[1] || '');
+            const type = args[2];
+            const amount = Number(args[3]);
+            const purpose = String(args[4] || '').trim();
+            const date = String(args[5] || '');
+            const parsedDate = new Date(date + 'T00:00:00Z');
+            const item = database.transactions.find(transaction =>
+              transaction.id === transactionId && transaction.householdId === householdId && transaction.userId === user.id
+            );
+            if (!item) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+            if (type !== 'income' && type !== 'expense') throw new Error('Jenis transaksi tidak valid.');
+            if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000000000) throw new Error('Nominal harus berupa jumlah EGP positif.');
+            if (purpose.length < 2 || purpose.length > 160 || /^[=+\-@]/.test(purpose)) throw new Error('Keterangan harus berisi 2–160 karakter yang valid.');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw new Error('Tanggal transaksi tidak valid.');
+            Object.assign(item, { type: type, amount: amount, purpose: purpose, date: date });
+            saveLocalDatabase(database);
+            return { success: true };
+          }
+          if (method === 'apiDeleteTransaction') {
+            const transactionId = String(args[1] || '');
+            const index = database.transactions.findIndex(transaction =>
+              transaction.id === transactionId && transaction.householdId === householdId && transaction.userId === user.id
+            );
+            if (index < 0) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+            database.transactions.splice(index, 1);
+            saveLocalDatabase(database);
+            return { success: true };
+          }
           if (method === 'apiTogglePayment') {
             const itemId = String(args[1] || '');
             const month = String(args[2] || '');
@@ -761,6 +804,21 @@
             if (name.length < 2 || name.length > 60 || /^[=+\-@]/.test(name)) throw new Error('Nama pembayaran harus berisi 2–60 karakter yang valid.');
             if (!Number.isSafeInteger(amount) || amount < 0 || amount > 1000000000000) throw new Error('Nominal pembayaran tidak valid.');
             database.payments.push({ id: localId(), householdId: householdId, name: name, amount: amount, createdAt: new Date().toISOString() });
+            saveLocalDatabase(database);
+            return { success: true };
+          }
+          if (method === 'apiUpdatePaymentItem') {
+            const itemId = String(args[1] || '');
+            const name = String(args[2] || '').trim();
+            const amount = Number(args[3]);
+            const item = database.payments.find(payment =>
+              payment.id === itemId && payment.householdId === householdId && payment.active !== false
+            );
+            if (!item) throw new Error('Item pembayaran tidak ditemukan.');
+            if (name.length < 2 || name.length > 60 || /^[=+\-@]/.test(name)) throw new Error('Nama pembayaran harus berisi 2–60 karakter yang valid.');
+            if (!Number.isSafeInteger(amount) || amount < 0 || amount > 1000000000000) throw new Error('Nominal pembayaran tidak valid.');
+            item.name = name;
+            item.amount = amount;
             saveLocalDatabase(database);
             return { success: true };
           }
@@ -818,6 +876,34 @@
           displayError('auth-error', '');
         }
 
+        function openTransactionEditor(item) {
+          state.transactionToEdit = item;
+          $('transaction-form').reset();
+          state.transactionType = item.type;
+          document.querySelectorAll('[data-type]').forEach(button =>
+            button.classList.toggle('active', button.dataset.type === state.transactionType)
+          );
+          $('transaction-amount').value = item.amount;
+          $('transaction-purpose').value = item.purpose;
+          $('transaction-date').value = item.date;
+          $('transaction-modal-title').textContent = 'Edit transaksi';
+          $('save-transaction').textContent = 'Simpan perubahan';
+          displayError('transaction-error', '');
+          $('transaction-modal').classList.remove('hidden');
+        }
+
+        function openPaymentEditor(item) {
+          state.paymentToEdit = item;
+          $('payment-form').reset();
+          $('payment-name').value = item.name;
+          $('payment-amount').value = item.amount;
+          $('payment-modal-title').textContent = 'Edit iuran';
+          $('payment-modal-copy').textContent = 'Perubahan nominal berlaku untuk pembayaran berikutnya; riwayat pembayaran tetap.';
+          $('save-payment').textContent = 'Simpan perubahan';
+          displayError('payment-error', '');
+          $('payment-modal').classList.remove('hidden');
+        }
+
         function renderTransactions(container, transactions, limit) {
           container.replaceChildren();
           const items = limit ? transactions.slice(0, limit) : transactions;
@@ -851,6 +937,31 @@
             amount.className = 'transaction-amount ' + (item.type === 'income' ? 'in' : 'out');
             amount.textContent = (item.type === 'income' ? '+' : '−') + money(item.amount);
             row.append(marker, info, amount);
+            if (item.userId === state.data.user.id && !String(item.id).startsWith('payment-')) {
+              const actions = document.createElement('span');
+              actions.className = 'transaction-actions';
+              const editButton = document.createElement('button');
+              editButton.type = 'button';
+              editButton.className = 'row-action';
+              editButton.setAttribute('aria-label', 'Edit transaksi ' + item.purpose);
+              editButton.title = 'Edit transaksi';
+              editButton.innerHTML = icon('<path d="m14 5 5 5"/><path d="M4 20h4l11-11a2.1 2.1 0 0 0-4-4L4 16v4Z"/>');
+              editButton.addEventListener('click', () => openTransactionEditor(item));
+              const deleteButton = document.createElement('button');
+              deleteButton.type = 'button';
+              deleteButton.className = 'row-action danger';
+              deleteButton.setAttribute('aria-label', 'Hapus transaksi ' + item.purpose);
+              deleteButton.title = 'Hapus transaksi';
+              deleteButton.innerHTML = icon('<path d="M4 7h16"/><path d="M10 11v6m4-6v6"/><path d="m5 7 1 13h12l1-13"/><path d="M9 7V4h6v3"/>');
+              deleteButton.addEventListener('click', () => {
+                state.transactionToDelete = item;
+                $('delete-transaction-message').textContent = 'Hapus transaksi "' + item.purpose + '" sebesar ' + money(item.amount) + '?';
+                displayError('delete-transaction-error', '');
+                $('delete-transaction-modal').classList.remove('hidden');
+              });
+              actions.append(editButton, deleteButton);
+              row.appendChild(actions);
+            }
             container.appendChild(row);
           });
         }
@@ -909,19 +1020,29 @@
             status.textContent = paidBy.length + '/' + memberCount + ' bayar';
             row.append(checkWrap, info, status);
             if (!compact) {
+              const actions = document.createElement('span');
+              actions.className = 'payment-actions';
+              const editButton = document.createElement('button');
+              editButton.type = 'button';
+              editButton.className = 'row-action payment-edit';
+              editButton.setAttribute('aria-label', 'Edit iuran ' + item.name);
+              editButton.title = 'Edit iuran';
+              editButton.innerHTML = icon('<path d="m14 5 5 5"/><path d="M4 20h4l11-11a2.1 2.1 0 0 0-4-4L4 16v4Z"/>');
+              editButton.addEventListener('click', () => openPaymentEditor(item));
               const deleteButton = document.createElement('button');
               deleteButton.type = 'button';
-              deleteButton.className = 'payment-delete';
+              deleteButton.className = 'row-action danger';
               deleteButton.setAttribute('aria-label', 'Hapus iuran ' + item.name);
+              deleteButton.title = 'Hapus iuran';
               deleteButton.innerHTML = icon('<path d="M4 7h16"/><path d="M10 11v6m4-6v6"/><path d="m5 7 1 13h12l1-13"/><path d="M9 7V4h6v3"/>');
-              deleteButton.appendChild(document.createTextNode('Hapus'));
               deleteButton.addEventListener('click', () => {
                 state.paymentToDelete = item;
                 $('delete-payment-message').textContent = 'Hapus iuran "' + item.name + '" dari daftar rumah?';
                 displayError('delete-payment-error', '');
                 $('delete-payment-modal').classList.remove('hidden');
               });
-              row.appendChild(deleteButton);
+              actions.append(editButton, deleteButton);
+              row.appendChild(actions);
             }
             container.appendChild(row);
           });
@@ -1171,12 +1292,15 @@
         $('mobile-logout').addEventListener('click', logout);
 
         $('add-transaction').addEventListener('click', () => {
+          state.transactionToEdit = null;
           $('transaction-form').reset();
           state.transactionType = 'expense';
           document.querySelectorAll('[data-type]').forEach(button => button.classList.toggle('active', button.dataset.type === state.transactionType));
           const today = new Date();
           today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
           $('transaction-date').value = today.toISOString().slice(0, 10);
+          $('transaction-modal-title').textContent = 'Catat transaksi';
+          $('save-transaction').textContent = 'Simpan transaksi';
           displayError('transaction-error', '');
           $('transaction-modal').classList.remove('hidden');
         });
@@ -1190,13 +1314,22 @@
           button.disabled = true;
           displayError('transaction-error', '');
           try {
-            await callApi('apiAddTransaction', [
-              state.token, state.transactionType, $('transaction-amount').value,
-              $('transaction-purpose').value, $('transaction-date').value
-            ]);
+            if (state.transactionToEdit) {
+              await callApi('apiUpdateTransaction', [
+                state.token, state.transactionToEdit.id, state.transactionType, $('transaction-amount').value,
+                $('transaction-purpose').value, $('transaction-date').value
+              ]);
+            } else {
+              await callApi('apiAddTransaction', [
+                state.token, state.transactionType, $('transaction-amount').value,
+                $('transaction-purpose').value, $('transaction-date').value
+              ]);
+            }
+            const wasEditing = Boolean(state.transactionToEdit);
+            state.transactionToEdit = null;
             $('transaction-modal').classList.add('hidden');
             await refresh();
-            showToast('Transaksi berhasil disimpan.');
+            showToast(wasEditing ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil disimpan.');
           } catch (error) {
             displayError('transaction-error', error.message);
           } finally {
@@ -1204,8 +1337,31 @@
           }
         });
 
+        $('confirm-delete-transaction').addEventListener('click', async () => {
+          const item = state.transactionToDelete;
+          if (!item) return;
+          const button = $('confirm-delete-transaction');
+          button.disabled = true;
+          displayError('delete-transaction-error', '');
+          try {
+            await callApi('apiDeleteTransaction', [state.token, item.id]);
+            state.transactionToDelete = null;
+            $('delete-transaction-modal').classList.add('hidden');
+            await refresh();
+            showToast('Transaksi berhasil dihapus.');
+          } catch (error) {
+            displayError('delete-transaction-error', error.message);
+          } finally {
+            button.disabled = false;
+          }
+        });
+
         $('add-payment').addEventListener('click', () => {
+          state.paymentToEdit = null;
           $('payment-form').reset();
+          $('payment-modal-title').textContent = 'Tambah jenis iuran';
+          $('payment-modal-copy').textContent = 'Item baru akan muncul untuk semua anggota rumah.';
+          $('save-payment').textContent = 'Tambah iuran';
           displayError('payment-error', '');
           $('payment-modal').classList.remove('hidden');
         });
@@ -1215,10 +1371,18 @@
           button.disabled = true;
           displayError('payment-error', '');
           try {
-            await callApi('apiAddPaymentItem', [state.token, $('payment-name').value, $('payment-amount').value || 0]);
+            if (state.paymentToEdit) {
+              await callApi('apiUpdatePaymentItem', [
+                state.token, state.paymentToEdit.id, $('payment-name').value, $('payment-amount').value || 0
+              ]);
+            } else {
+              await callApi('apiAddPaymentItem', [state.token, $('payment-name').value, $('payment-amount').value || 0]);
+            }
+            const wasEditing = Boolean(state.paymentToEdit);
+            state.paymentToEdit = null;
             $('payment-modal').classList.add('hidden');
             await refresh();
-            showToast('Jenis iuran berhasil ditambahkan.');
+            showToast(wasEditing ? 'Iuran berhasil diperbarui.' : 'Jenis iuran berhasil ditambahkan.');
           } catch (error) {
             displayError('payment-error', error.message);
           } finally {

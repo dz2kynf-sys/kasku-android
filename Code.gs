@@ -84,6 +84,7 @@ function apiGetData(token) {
     .filter(row => String(row[7]) === householdId)
     .map(row => ({
       id: String(row[0]),
+      userId: String(row[1]),
       type: String(row[2]),
       amount: Number(row[3]),
       purpose: String(row[4]),
@@ -130,6 +131,7 @@ function apiGetData(token) {
     const date = String(row[4] || '').slice(0, 10);
     transactions.push({
       id: 'payment-' + String(row[0]) + '-' + String(row[1]) + '-' + String(row[2]),
+      userId: String(row[0]),
       type: 'income',
       amount: amount,
       purpose: 'Iuran: ' + String(payment[1]),
@@ -195,6 +197,62 @@ function apiAddTransaction(token, type, amount, purpose, date) {
   return { success: true };
 }
 
+function apiUpdateTransaction(token, transactionId, type, amount, purpose, date) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(transactionId || '');
+  if (!/^[\w-]{1,80}$/.test(targetId)) throw new Error('Transaksi tidak valid.');
+  if (type !== 'income' && type !== 'expense') throw new Error('Jenis transaksi tidak valid.');
+  const numericAmount = Number(amount);
+  if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0 || numericAmount > 1000000000000) {
+    throw new Error('Nominal harus berupa jumlah EGP positif.');
+  }
+  const description = validateText_(purpose, 'Keterangan', 2, 160);
+  const transactionDate = String(date || '');
+  const parsedDate = new Date(transactionDate + 'T00:00:00Z');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(transactionDate) || isNaN(parsedDate.getTime()) ||
+      parsedDate.toISOString().slice(0, 10) !== transactionDate) {
+    throw new Error('Tanggal transaksi tidak valid.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('transactions');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
+      String(row[1]) === user.id && String(row[7]) === household.id);
+    if (index < 1) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+    sheet.getRange(index + 1, 3, 1, 4).setValues([[
+      type, numericAmount, description, transactionDate
+    ]]);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiDeleteTransaction(token, transactionId) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(transactionId || '');
+  if (!/^[\w-]{1,80}$/.test(targetId)) throw new Error('Transaksi tidak valid.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('transactions');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
+      String(row[1]) === user.id && String(row[7]) === household.id);
+    if (index < 1) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
+    sheet.deleteRow(index + 1);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
 function apiTogglePayment(token, itemId, month, checked) {
   const user = requireSession_(token);
   const household = requireHousehold_(token, user);
@@ -245,6 +303,32 @@ function apiAddPaymentItem(token, name, amount) {
     getSheet_('payments').appendRow([
       Utilities.getUuid(), title, numericAmount, true, new Date().toISOString(), household.id
     ]);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiUpdatePaymentItem(token, paymentId, name, amount) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(paymentId || '');
+  if (!/^[\w-]{1,80}$/.test(targetId)) throw new Error('Item pembayaran tidak valid.');
+  const title = validateText_(name, 'Nama pembayaran', 2, 60);
+  const numericAmount = Number(amount);
+  if (!Number.isSafeInteger(numericAmount) || numericAmount < 0 || numericAmount > 1000000000000) {
+    throw new Error('Nominal pembayaran tidak valid.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('payments');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
+      String(row[5]) === household.id && row[3] !== false && String(row[3]).toLowerCase() !== 'false');
+    if (index < 1) throw new Error('Item pembayaran tidak ditemukan.');
+    sheet.getRange(index + 1, 2, 1, 2).setValues([[title, numericAmount]]);
   } finally {
     lock.releaseLock();
   }
