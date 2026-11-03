@@ -23,9 +23,22 @@ Gunakan URL `/exec` untuk menyimpan langsung ke spreadsheet. Setiap akun baru me
 
 ## Firebase
 
-Mode APK dan server lokal memakai Firebase Authentication (email/kata sandi) dan Cloud Firestore pada proyek `kasku-2f342`. Konfigurasi Web App di `www/firebase-config.js` adalah konfigurasi klien; jangan menaruh service-account JSON atau private key di aplikasi.
+Mode APK dan server lokal memakai Firebase Authentication (email/kata sandi) dan Cloud Firestore pada proyek `kasku-mesir-free-2026`. Konfigurasi Web App di `www/firebase-config.js` adalah konfigurasi klien; jangan menaruh service-account JSON atau private key di aplikasi.
 
-Database menggunakan lokasi Jakarta (`asia-southeast2`) dan dibuat dalam production mode. Aturan akses berada di `firestore.rules`; jangan mengubah database ke test mode atau menerbitkan aturan yang mengizinkan akses publik. Untuk menerapkan aturan dari root proyek, jalankan Firebase CLI dengan akun Google pemilik proyek lalu `firebase deploy --only firestore:rules`.
+Target lokasi database baru adalah Doha (`me-central1`); Firestore tidak menyediakan region di Mesir. Lokasi database Firestore tidak dapat diubah setelah database dibuat. Sebelum membuat database, login dengan akun Google pemilik proyek dan periksa database yang sudah ada:
+
+```sh
+firebase login
+firebase firestore:databases:list --project kasku-mesir-free-2026
+```
+
+Jika belum ada database default, buat database production di Doha:
+
+```sh
+firebase firestore:databases:create "(default)" --location me-central1 --project kasku-mesir-free-2026
+```
+
+Jika database default sudah ada, gunakan lokasi yang ada; jangan membuat database lain tanpa mengubah konfigurasi aplikasi. Aturan akses berada di `firestore.rules`; jangan mengubah database ke test mode atau menerbitkan aturan yang mengizinkan akses publik. Untuk menerapkan aturan dari root proyek, jalankan `firebase deploy --only firestore:rules --project kasku-mesir-free-2026`.
 
 ### Publikasikan web untuk teman
 
@@ -33,10 +46,10 @@ Firebase Hosting menyajikan aplikasi dari folder `www`; login dan data tetap men
 
 1. Pasang Firebase CLI dengan `npm install -g firebase-tools`.
 2. Jalankan `firebase login` dengan akun Google pemilik proyek.
-3. Dari folder proyek, jalankan `firebase deploy --only hosting`.
-4. Bagikan `https://kasku-2f342.web.app` kepada teman. Mereka perlu membuat akun sendiri di aplikasi; data rumah hanya terlihat oleh anggota yang bergabung.
+3. Dari folder proyek, jalankan `firebase deploy --only hosting --project kasku-mesir-free-2026`.
+4. Bagikan `https://kasku-mesir-free-2026.web.app` kepada teman. Mereka perlu membuat akun sendiri di aplikasi; data rumah hanya terlihat oleh anggota yang bergabung.
 
-Jika login ditolak, pastikan Email/Password aktif di Firebase Authentication dan domain `kasku-2f342.web.app` diizinkan pada pengaturan Authorized domains. Jangan deploy aturan Firestore publik.
+Jika login ditolak, pastikan Email/Password aktif di Firebase Authentication dan domain `kasku-mesir-free-2026.web.app` diizinkan pada pengaturan Authorized domains. Jangan deploy aturan Firestore publik.
 
 Firebase Auth dan Google Sheets adalah mode terpisah: halaman Apps Script tetap memakai spreadsheet, sedangkan APK dan server lokal memakai Firebase. Akun serta data lokal lama tidak otomatis dipindahkan ke Firebase; pengguna perlu membuat akun Firebase di aplikasi.
 

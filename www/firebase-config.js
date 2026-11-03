@@ -1,8 +1,8 @@
 window.KASKU_FIREBASE_CONFIG = Object.freeze({
-  apiKey: "AIzaSyBg8w5N1IbFlGM0txljoZgdR4qi9nyK028",
-  authDomain: "kasku-2f342.firebaseapp.com",
-  projectId: "kasku-2f342",
-  storageBucket: "kasku-2f342.firebasestorage.app",
-  messagingSenderId: "104110917602",
-  appId: "1:104110917602:web:5ca7c1835f8a8aa8d81bbb"
+  apiKey: "AIzaSyDQhcptfXdX6lXgjcPDcjQ9XI0SUllfsD0",
+  authDomain: "kasku-mesir-free-2026.firebaseapp.com",
+  projectId: "kasku-mesir-free-2026",
+  storageBucket: "kasku-mesir-free-2026.firebasestorage.app",
+  messagingSenderId: "343709875183",
+  appId: "1:343709875183:web:07ff23eec68ec05fe9541a"
 });
