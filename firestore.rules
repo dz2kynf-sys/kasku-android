@@ -175,26 +175,80 @@ service cloud.firestore {
 
     match /checks/{checkId} {
       allow read: if signedIn()
-        && resource.data.userId == request.auth.uid
         && isMember(resource.data.householdId);
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly([
-          'userId', 'itemId', 'householdId', 'month', 'checked', 'updatedAt'
+          'userId', 'itemId', 'householdId', 'month', 'checked', 'amount', 'updatedAt'
         ])
         && request.resource.data.userId == request.auth.uid
         && isMember(request.resource.data.householdId)
-        && request.resource.data.itemId is string
+        && request.resource.data.itemId.matches('^[A-Za-z0-9_-]{1,80}$')
         && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && checkId == request.auth.uid + '_' + request.resource.data.itemId + '_' + request.resource.data.month
         && request.resource.data.checked is bool
+        && request.resource.data.amount is int
+        && request.resource.data.amount >= 0
+        && request.resource.data.amount <= 1000000000000
         && request.resource.data.updatedAt is string
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.active == true
         && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.householdId
-          == request.resource.data.householdId;
+          == request.resource.data.householdId
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.amount
+          == request.resource.data.amount;
       allow update: if signedIn()
         && resource.data.userId == request.auth.uid
         && isMember(resource.data.householdId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'amount', 'updatedAt'])
         && request.resource.data.checked is bool
-        && request.resource.data.updatedAt is string;
+        && request.resource.data.updatedAt is string
+        && request.resource.data.amount is int
+        && request.resource.data.amount >= 0
+        && request.resource.data.amount <= 1000000000000
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.active == true
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.householdId
+          == resource.data.householdId
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.amount
+          == request.resource.data.amount;
+      allow delete: if false;
+    }
+
+    match /households/{householdId}/checks/{checkId} {
+      allow read: if isMember(householdId);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'userId', 'itemId', 'householdId', 'month', 'checked', 'amount', 'updatedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.householdId == householdId
+        && isMember(householdId)
+        && request.resource.data.itemId.matches('^[A-Za-z0-9_-]{1,80}$')
+        && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && checkId == request.auth.uid + '_' + request.resource.data.itemId + '_' + request.resource.data.month
+        && request.resource.data.checked is bool
+        && request.resource.data.amount is int
+        && request.resource.data.amount >= 0
+        && request.resource.data.amount <= 1000000000000
+        && request.resource.data.updatedAt is string
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.active == true
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.householdId
+          == householdId
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.amount
+          == request.resource.data.amount;
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.householdId == householdId
+        && isMember(householdId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'amount', 'updatedAt'])
+        && request.resource.data.checked is bool
+        && request.resource.data.updatedAt is string
+        && request.resource.data.amount is int
+        && request.resource.data.amount >= 0
+        && request.resource.data.amount <= 1000000000000
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.active == true
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.householdId
+          == householdId
+        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.amount
+          == request.resource.data.amount;
       allow delete: if false;
     }
 

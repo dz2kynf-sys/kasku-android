@@ -168,6 +168,7 @@
       .payment-info strong, .payment-info span { display: block; }
       .payment-info strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
       .payment-info span { margin-top: 2px; color: #8b9690; font-size: 10px; }
+      .payment-info .payment-payers { overflow-wrap: anywhere; white-space: normal; }
       .payment-status { padding: 4px 7px; border-radius: 7px; color: #718078; background: #f1f3f2; font-size: 9px; font-weight: 700; }
       .payment-status.done { color: #18764f; background: #e8f5ed; }
       .chart-panel { margin-top: 17px; }
@@ -351,11 +352,11 @@
 
         <section id="page-payments" class="page-section">
           <div class="panel">
-            <div class="panel-head"><div><h2>Checklist iuran rumah</h2><p>Status pembayaran pribadi untuk bulan ini.</p></div><button id="add-payment" class="secondary-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Tambah iuran</button></div>
+            <div class="panel-head"><div><h2>Checklist iuran rumah</h2><p>Lihat siapa yang sudah membayar bulan ini. Pembayaran masuk ke saldo rumah.</p></div><button id="add-payment" class="secondary-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Tambah iuran</button></div>
             <div class="payment-summary"><div class="payment-progress"><span id="payments-page-count">0 dari 0 selesai</span><strong id="payments-page-percent">0%</strong></div><div class="progress-track"><div id="payments-page-progress" class="progress-fill"></div></div></div>
             <div id="all-payments" class="payment-list"></div>
           </div>
-          <p style="margin:12px 4px;color:#87938b;font-size:11px">Daftar iuran dibagikan dengan anggota rumah. Checklist pelunasan tetap pribadi untuk setiap akun.</p>
+          <p style="margin:12px 4px;color:#87938b;font-size:11px">Status pembayaran dapat dilihat semua anggota rumah. Setiap anggota menandai pembayaran miliknya sendiri; nominal iuran yang lunas menambah saldo rumah.</p>
         </section>
 
         <section id="page-household" class="page-section">
@@ -430,7 +431,7 @@
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore-compat.js"></script>
     <script src="./firebase-config.js"></script>
-    <script src="./firebase-api.js"></script>
+    <script src="./firebase-api.js?v=shared-iuran-v2"></script>
     <script>
       (function () {
         const $ = id => document.getElementById(id);
@@ -656,7 +657,35 @@
             if (!household) throw new Error('Data rumah tidak ditemukan.');
             const transactions = database.transactions
               .filter(item => item.householdId === householdId)
-              .sort((a, b) => b.date.localeCompare(a.date));
+              .slice();
+            const paymentsById = new Map(database.payments.map(item => [item.id, item]));
+            const householdMembers = database.memberships.filter(item => item.householdId === householdId);
+            const memberNames = new Map(householdMembers.map(member => {
+              const account = database.users.find(item => item.id === member.userId);
+              return [member.userId, account ? account.name : 'Anggota'];
+            }));
+            const householdChecks = database.checks.filter(check =>
+              check.householdId === householdId && check.checked
+            );
+            householdChecks.forEach(check => {
+              const payment = paymentsById.get(check.itemId);
+              if (!payment) return;
+              const amount = Number(check.amount !== undefined ? check.amount : payment.amount);
+              if (amount <= 0) return;
+              const date = String(check.updatedAt || '').slice(0, 10);
+              transactions.push({
+                id: 'payment-' + check.userId + '-' + check.itemId + '-' + check.month,
+                userId: check.userId,
+                householdId: householdId,
+                createdBy: memberNames.get(check.userId) || 'Anggota',
+                type: 'income',
+                amount: amount,
+                purpose: 'Iuran: ' + payment.name,
+                date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : check.month + '-01',
+                createdAt: check.updatedAt || ''
+              });
+            });
+            transactions.sort((a, b) => b.date.localeCompare(a.date));
             const income = transactions.reduce((sum, item) => item.type === 'income' ? sum + item.amount : sum, 0);
             const expenses = transactions.reduce((sum, item) => item.type === 'expense' ? sum + item.amount : sum, 0);
             const households = database.memberships.filter(item => item.userId === user.id)
@@ -676,12 +705,21 @@
               month: month,
               totals: { income: income, expenses: expenses, balance: income - expenses },
               transactions: transactions,
-              payments: database.payments.filter(item => item.householdId === householdId && item.active !== false).map(item => ({
-                id: item.id,
-                name: item.name,
-                amount: item.amount,
-                checked: database.checks.some(check => check.userId === user.id && check.householdId === householdId && check.itemId === item.id && check.month === month && check.checked)
-              }))
+              payments: database.payments.filter(item => item.householdId === householdId && item.active !== false).map(item => {
+                const paidChecks = householdChecks.filter(check =>
+                  check.itemId === item.id && check.month === month
+                );
+                return {
+                  id: item.id,
+                  name: item.name,
+                  amount: item.amount,
+                  checked: paidChecks.some(check => check.userId === user.id),
+                  paidBy: Array.from(new Map(paidChecks.map(check => [
+                    check.userId,
+                    { userId: check.userId, name: memberNames.get(check.userId) || 'Anggota' }
+                  ])).values())
+                };
+              })
             };
           }
           if (method === 'apiAddTransaction') {
@@ -704,8 +742,16 @@
             const item = database.payments.find(payment => payment.id === itemId && payment.householdId === householdId && payment.active !== false);
             if (!item || !/^\d{4}-\d{2}$/.test(month)) throw new Error('Data checklist tidak valid.');
             const existing = database.checks.find(check => check.userId === user.id && check.householdId === householdId && check.itemId === itemId && check.month === month);
-            if (existing) existing.checked = Boolean(args[3]);
-            else database.checks.push({ userId: user.id, householdId: householdId, itemId: itemId, month: month, checked: Boolean(args[3]) });
+            if (existing) {
+              existing.checked = Boolean(args[3]);
+              existing.amount = item.amount;
+              existing.updatedAt = new Date().toISOString();
+            } else {
+              database.checks.push({
+                userId: user.id, householdId: householdId, itemId: itemId, month: month,
+                checked: Boolean(args[3]), amount: item.amount, updatedAt: new Date().toISOString()
+              });
+            }
             saveLocalDatabase(database);
             return { success: true };
           }
@@ -830,15 +876,13 @@
             checkbox.setAttribute('aria-label', 'Tandai ' + item.name + ' sudah dibayar');
             checkbox.addEventListener('change', async () => {
               checkbox.disabled = true;
+              const checked = checkbox.checked;
               try {
-                await callApi('apiTogglePayment', [state.token, item.id, state.data.month, checkbox.checked]);
-                item.checked = checkbox.checked;
-                renderPayments($('dashboard-payments'), true);
-                renderPayments($('all-payments'), false);
-                updatePaymentProgress();
-                showToast(checkbox.checked ? 'Pembayaran ditandai selesai.' : 'Status pembayaran diperbarui.');
+                await callApi('apiTogglePayment', [state.token, item.id, state.data.month, checked]);
+                await refresh();
+                showToast(checked ? 'Pembayaran ditandai selesai dan masuk ke saldo rumah.' : 'Status pembayaran diperbarui.');
               } catch (error) {
-                checkbox.checked = !checkbox.checked;
+                checkbox.checked = !checked;
                 showToast(error.message);
               } finally {
                 checkbox.disabled = false;
@@ -852,9 +896,17 @@
             const amount = document.createElement('span');
             amount.textContent = item.amount ? money(item.amount) : (compact ? 'Pembayaran bulanan' : 'Nominal belum ditentukan');
             info.append(name, amount);
+            const paidBy = Array.isArray(item.paidBy) ? item.paidBy : [];
+            const payerList = document.createElement('span');
+            payerList.className = 'payment-payers';
+            payerList.textContent = paidBy.length
+              ? 'Sudah bayar: ' + paidBy.map(payer => payer.name).join(', ')
+              : 'Belum ada yang membayar';
+            info.appendChild(payerList);
             const status = document.createElement('span');
-            status.className = 'payment-status' + (item.checked ? ' done' : '');
-            status.textContent = item.checked ? 'Lunas' : 'Belum';
+            const memberCount = state.data.members.length;
+            status.className = 'payment-status' + (memberCount > 0 && paidBy.length === memberCount ? ' done' : '');
+            status.textContent = paidBy.length + '/' + memberCount + ' bayar';
             row.append(checkWrap, info, status);
             if (!compact) {
               const deleteButton = document.createElement('button');
@@ -876,13 +928,14 @@
         }
 
         function updatePaymentProgress() {
-          const total = state.data.payments.length;
-          const checked = state.data.payments.filter(item => item.checked).length;
+          const total = state.data.payments.length * state.data.members.length;
+          const checked = state.data.payments.reduce((sum, item) =>
+            sum + (Array.isArray(item.paidBy) ? item.paidBy.length : 0), 0);
           const percent = total ? Math.round(checked / total * 100) : 0;
-          $('payment-count').textContent = checked + ' dari ' + total + ' selesai';
+          $('payment-count').textContent = checked + ' dari ' + total + ' pembayaran anggota';
           $('payment-percent').textContent = percent + '%';
           $('payment-progress').style.width = percent + '%';
-          $('payments-page-count').textContent = checked + ' dari ' + total + ' selesai';
+          $('payments-page-count').textContent = checked + ' dari ' + total + ' pembayaran anggota';
           $('payments-page-percent').textContent = percent + '%';
           $('payments-page-progress').style.width = percent + '%';
         }
@@ -1029,6 +1082,7 @@
           $('page-title').textContent = page === 'payments' ? 'Iuran rumah' :
             page === 'transactions' ? 'Transaksi' : page === 'household' ? 'Rumah & akun' : 'Ringkasan';
           $('add-transaction').classList.toggle('hidden', page === 'payments' || page === 'household');
+          if (state.token) refresh().catch(error => showToast(error.message));
         }
 
         document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
@@ -1211,6 +1265,9 @@
           }
           showAuth();
         }
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && state.token) refresh().catch(error => showToast(error.message));
+        });
         start();
       })();
     </script>

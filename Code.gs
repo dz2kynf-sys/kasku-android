@@ -4,7 +4,7 @@ const SHEETS = {
   users: { name: 'Users', headers: ['id', 'name', 'email', 'salt', 'passwordHash', 'createdAt'] },
   transactions: { name: 'Transactions', headers: ['id', 'userId', 'type', 'amount', 'purpose', 'date', 'createdAt', 'householdId'] },
   payments: { name: 'PaymentItems', headers: ['id', 'name', 'amount', 'active', 'createdAt', 'householdId'] },
-  checks: { name: 'PaymentChecks', headers: ['userId', 'itemId', 'month', 'checked', 'updatedAt', 'householdId'] }
+  checks: { name: 'PaymentChecks', headers: ['userId', 'itemId', 'month', 'checked', 'updatedAt', 'householdId', 'amount'] }
 };
 const MEMBER_CHARACTERS = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
 const DEFAULT_MEMBER_CHARACTER = MEMBER_CHARACTERS[0];
@@ -111,17 +111,42 @@ function apiGetData(token) {
   const paymentRowsForHousehold = paymentRows
     .filter(row => String(row[5]) === householdId);
   const month = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM');
-  const checks = new Set(checkRows
-    .filter(row => String(row[0]) === user.id && String(row[2]) === month && String(row[5]) === householdId &&
-      (row[3] === true || String(row[3]).toLowerCase() === 'true'))
-    .map(row => String(row[1])));
+  const checksForHousehold = checkRows.filter(row => String(row[5]) === householdId &&
+    (row[3] === true || String(row[3]).toLowerCase() === 'true'));
+  const paymentsById = new Map(paymentRowsForHousehold.map(row => [String(row[0]), row]));
+  const paidBy = new Map();
+  checksForHousehold.filter(row => String(row[2]) === month).forEach(row => {
+    const payers = paidBy.get(String(row[1])) || [];
+    if (payers.some(payer => payer.userId === String(row[0]))) return;
+    const member = usersById.get(String(row[0]));
+    payers.push({ userId: String(row[0]), name: member ? String(member[1]) : 'Anggota' });
+    paidBy.set(String(row[1]), payers);
+  });
+  checksForHousehold.forEach(row => {
+    const payment = paymentsById.get(String(row[1]));
+    if (!payment) return;
+    const amount = Number(row[6] !== undefined && row[6] !== '' ? row[6] : payment[2]);
+    if (!Number.isSafeInteger(amount) || amount <= 0) return;
+    const date = String(row[4] || '').slice(0, 10);
+    transactions.push({
+      id: 'payment-' + String(row[0]) + '-' + String(row[1]) + '-' + String(row[2]),
+      type: 'income',
+      amount: amount,
+      purpose: 'Iuran: ' + String(payment[1]),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : String(row[2]) + '-01',
+      createdBy: usersById.has(String(row[0])) ? String(usersById.get(String(row[0]))[1]) : 'Anggota'
+    });
+  });
+  transactions.sort((a, b) => b.date.localeCompare(a.date));
   const payments = paymentRowsForHousehold
     .filter(row => row[0] && row[3] !== false && String(row[3]).toLowerCase() !== 'false')
     .map(row => ({
       id: String(row[0]),
       name: String(row[1]),
       amount: Number(row[2]),
-      checked: checks.has(String(row[0]))
+      checked: checksForHousehold.some(check => String(check[0]) === user.id &&
+        String(check[1]) === String(row[0]) && String(check[2]) === month),
+      paidBy: paidBy.get(String(row[0])) || []
     }));
 
   const income = transactions.reduce((sum, item) => item.type === 'income' ? sum + item.amount : sum, 0);
@@ -183,16 +208,17 @@ function apiTogglePayment(token, itemId, month, checked) {
   lock.waitLock(10000);
   try {
     const items = getSheet_('payments').getDataRange().getValues().slice(1);
-    if (!items.some(row => String(row[0]) === paymentId && String(row[5]) === household.id &&
-        row[3] !== false && String(row[3]).toLowerCase() !== 'false')) {
-      throw new Error('Item pembayaran tidak ditemukan.');
-    }
+    const payment = items.find(row => String(row[0]) === paymentId && String(row[5]) === household.id &&
+      row[3] !== false && String(row[3]).toLowerCase() !== 'false');
+    if (!payment) throw new Error('Item pembayaran tidak ditemukan.');
     const sheet = getSheet_('checks');
     const rows = sheet.getDataRange().getValues();
     const index = rows.findIndex((row, i) => i > 0 &&
       String(row[0]) === user.id && String(row[1]) === paymentId &&
       String(row[2]) === targetMonth && String(row[5]) === household.id);
-    const values = [user.id, paymentId, targetMonth, Boolean(checked), new Date().toISOString(), household.id];
+    const values = [
+      user.id, paymentId, targetMonth, Boolean(checked), new Date().toISOString(), household.id, Number(payment[2])
+    ];
     if (index >= 1) {
       sheet.getRange(index + 1, 1, 1, values.length).setValues([values]);
     } else {

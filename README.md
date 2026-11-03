@@ -19,7 +19,7 @@ Server lokal dan APK menggunakan Firebase untuk akun, transaksi, iuran, dan data
 4. Pilih **Deploy → New deployment → Web app**. Pilih **Execute as: Me** dan atur akses sesuai kebutuhan (akses **Anyone** memungkinkan pengguna membuat akun). Bagikan URL deployment yang berakhiran `/exec`.
 5. Untuk menerapkan perubahan kode, buka **Deploy → Manage deployments → Edit**, pilih versi baru, lalu deploy.
 
-Gunakan URL `/exec` untuk menyimpan langsung ke spreadsheet. Setiap akun baru mendapat rumah sendiri; anggota dapat bergabung memakai kode undangan dari menu **Rumah & akun**. Transaksi dan iuran dibagikan dengan anggota rumah, sedangkan checklist iuran bersifat pribadi. Kata sandi disimpan sebagai HMAC hash.
+Gunakan URL `/exec` untuk menyimpan langsung ke spreadsheet. Setiap akun baru mendapat rumah sendiri; anggota dapat bergabung memakai kode undangan dari menu **Rumah & akun**. Transaksi, daftar iuran, dan nama anggota yang sudah membayar dibagikan dengan anggota rumah. Setiap anggota menandai pembayaran miliknya sendiri; iuran yang lunas dicatat sebagai pemasukan ke saldo rumah. Kata sandi disimpan sebagai HMAC hash.
 
 ## Firebase
 
@@ -50,6 +50,8 @@ Firebase Hosting menyajikan aplikasi dari folder `www`; login dan data tetap men
 4. Bagikan `https://kasku-mesir-free-2026.web.app` kepada teman. Mereka perlu membuat akun sendiri di aplikasi; data rumah hanya terlihat oleh anggota yang bergabung.
 
 Jika login ditolak, pastikan Email/Password aktif di Firebase Authentication dan domain `kasku-mesir-free-2026.web.app` diizinkan pada pengaturan Authorized domains. Jangan deploy aturan Firestore publik.
+
+Status pembayaran iuran terlihat oleh seluruh anggota rumah. Setiap anggota menandai pembayaran sendiri; nominal yang ditandai lunas masuk ke saldo sebagai pemasukan dan tampil di riwayat transaksi. Data diperbarui saat membuka halaman atau kembali ke tab aplikasi.
 
 Firebase Auth dan Google Sheets adalah mode terpisah: halaman Apps Script tetap memakai spreadsheet, sedangkan APK dan server lokal memakai Firebase. Akun serta data lokal lama tidak otomatis dipindahkan ke Firebase; pengguna perlu membuat akun Firebase di aplikasi.
 

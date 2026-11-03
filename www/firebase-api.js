@@ -187,22 +187,57 @@
         const [transactionSnapshot, paymentSnapshot, checkSnapshot, memberSnapshot] = await Promise.all([
           db.collection('transactions').where('householdId', '==', householdId).get(),
           db.collection('payments').where('householdId', '==', householdId).get(),
-          db.collection('checks').where('householdId', '==', householdId)
-            .where('userId', '==', user.uid).get(),
+          db.collection('households').doc(householdId).collection('checks').get(),
           db.collection('memberships').where('householdId', '==', householdId).get()
         ]);
         const monthDate = new Date();
         const month = monthDate.getFullYear() + '-' + String(monthDate.getMonth() + 1).padStart(2, '0');
-        const checks = new Set(checkSnapshot.docs
-          .filter(document => document.data().month === month && document.data().checked)
-          .map(document => document.data().itemId));
-        const transactions = transactionSnapshot.docs.map(document => Object.assign({ id: document.id }, document.data()))
-          .sort((a, b) => b.date.localeCompare(a.date));
-        const payments = paymentSnapshot.docs
-          .filter(document => document.data().active !== false)
+        const members = memberSnapshot.docs.map(document => document.data());
+        const memberNames = new Map(members.map(member => [member.userId, member.name]));
+        const checks = checkSnapshot.docs.map(document => document.data());
+        const paymentDocuments = paymentSnapshot.docs.map(document => ({
+          id: document.id,
+          data: document.data()
+        }));
+        const paymentsById = new Map(paymentDocuments.map(item => [item.id, item.data]));
+        const transactions = transactionSnapshot.docs.map(document => Object.assign({ id: document.id }, document.data()));
+        checks.filter(check => check.checked).forEach(check => {
+          const payment = paymentsById.get(check.itemId);
+          if (!payment) return;
+          const amount = typeof check.amount === 'number' ? check.amount : Number(payment.amount);
+          if (amount <= 0) return;
+          const memberName = memberNames.get(check.userId) || 'Anggota';
+          const date = String(check.updatedAt || '').slice(0, 10);
+          transactions.push({
+            id: 'payment-' + check.userId + '-' + check.itemId + '-' + check.month,
+            userId: check.userId,
+            householdId: householdId,
+            createdBy: memberName,
+            type: 'income',
+            amount: amount,
+            purpose: 'Iuran: ' + payment.name,
+            date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : check.month + '-01',
+            createdAt: check.updatedAt || ''
+          });
+        });
+        transactions.sort((a, b) => b.date.localeCompare(a.date));
+        const payments = paymentDocuments
+          .filter(document => document.data.active !== false)
           .map(document => {
-            const item = document.data();
-            return { id: document.id, name: item.name, amount: Number(item.amount), checked: checks.has(document.id) };
+            const itemChecks = checks.filter(check =>
+              check.itemId === document.id && check.month === month && check.checked
+            );
+            const paidBy = Array.from(new Map(itemChecks.map(check => [
+              check.userId,
+              { userId: check.userId, name: memberNames.get(check.userId) || 'Anggota' }
+            ])).values());
+            return {
+              id: document.id,
+              name: document.data.name,
+              amount: Number(document.data.amount),
+              checked: itemChecks.some(check => check.userId === user.uid),
+              paidBy: paidBy
+            };
           });
         const income = transactions.reduce((sum, item) => item.type === 'income' ? sum + item.amount : sum, 0);
         const expenses = transactions.reduce((sum, item) => item.type === 'expense' ? sum + item.amount : sum, 0);
@@ -255,7 +290,7 @@
       if (method === 'apiTogglePayment') {
         const itemId = String(args[1] || '');
         const month = String(args[2] || '');
-        if (!/^[\w-]{1,80}$/.test(itemId) || !/^\d{4}-\d{2}$/.test(month)) {
+        if (!/^[\w-]{1,80}$/.test(itemId) || !/^\d{4}-\d{2}$/.test(month) || typeof args[3] !== 'boolean') {
           throw new Error('Data checklist tidak valid.');
         }
         const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
@@ -263,10 +298,12 @@
         if (!payment.exists || payment.data().householdId !== householdId || payment.data().active === false) {
           throw new Error('Item pembayaran tidak ditemukan.');
         }
-        const checkRef = db.collection('checks').doc(user.uid + '_' + itemId + '_' + month);
+        const checkRef = db.collection('households').doc(householdId)
+          .collection('checks').doc(user.uid + '_' + itemId + '_' + month);
         await checkRef.set({
           userId: user.uid, itemId: itemId, householdId: householdId,
-          month: month, checked: Boolean(args[3]), updatedAt: new Date().toISOString()
+          month: month, checked: args[3], amount: Number(payment.data().amount),
+          updatedAt: new Date().toISOString()
         });
         return { success: true };
       }
