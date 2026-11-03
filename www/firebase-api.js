@@ -1,9 +1,7 @@
 (function (global) {
   const config = global.KASKU_FIREBASE_CONFIG;
-  const defaultPayments = [
-    ['house', 'Iuran rumah'], ['electricity', 'Listrik'], ['water', 'Air'],
-    ['internet', 'Internet'], ['cleaning', 'Kebersihan']
-  ];
+  const memberCharacters = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
+  const defaultMemberCharacter = memberCharacters[0];
   const errorMessages = {
     'auth/email-already-in-use': 'Email ini sudah terdaftar. Silakan masuk.',
     'auth/invalid-credential': 'Email atau kata sandi tidak cocok.',
@@ -70,7 +68,7 @@
     return Array.from(bytes, value => alphabet[value & 31]).join('');
   }
 
-  function addHouseholdWrites(batch, user, name) {
+  function addHouseholdWrites(batch, user, name, character) {
     const now = new Date().toISOString();
     const householdRef = db.collection('households').doc();
     const code = inviteCode();
@@ -90,7 +88,8 @@
       email: user.email,
       role: 'owner',
       inviteCode: code,
-      createdAt: now
+      createdAt: now,
+      character: character
     });
     batch.set(db.collection('inviteCodes').doc(code), {
       householdId: householdRef.id,
@@ -98,18 +97,6 @@
       createdAt: now
     });
 
-    defaultPayments.forEach(([id, title]) => {
-      const paymentRef = db.collection('payments').doc();
-      batch.set(paymentRef, {
-        id: paymentRef.id,
-        name: title,
-        amount: 0,
-        active: true,
-        createdAt: now,
-        householdId: householdRef.id,
-        createdBy: user.uid
-      });
-    });
     return { id: householdRef.id, name: name, inviteCode: code };
   }
 
@@ -140,8 +127,10 @@
         const user = credential.user;
         const now = new Date().toISOString();
         const batch = db.batch();
-        const household = addHouseholdWrites(batch, { uid: user.uid, name: name, email: user.email }, name + ' Rumah');
-        batch.set(db.collection('users').doc(user.uid), { name: name, email: user.email, createdAt: now });
+        const household = addHouseholdWrites(batch, { uid: user.uid, name: name, email: user.email }, name + ' Rumah', defaultMemberCharacter);
+        batch.set(db.collection('users').doc(user.uid), {
+          name: name, email: user.email, createdAt: now, character: defaultMemberCharacter
+        });
         try {
           await batch.commit();
         } catch (error) {
@@ -223,12 +212,15 @@
         }));
 
         return {
-          user: { name: profile.name, email: user.email },
+          user: { id: user.uid, name: profile.name, email: user.email, character: profile.character || defaultMemberCharacter },
           household: { id: householdId, name: household.name, inviteCode: household.inviteCode },
           households: households.filter(Boolean).map(item => ({ id: item.id, name: item.name, inviteCode: item.inviteCode })),
           members: memberSnapshot.docs.map(document => {
             const member = document.data();
-            return { name: member.name, email: member.email, role: member.role };
+            return {
+              userId: member.userId, name: member.name, email: member.email, role: member.role,
+              character: memberCharacters.includes(member.character) ? member.character : defaultMemberCharacter
+            };
           }),
           month: month,
           totals: { income: income, expenses: expenses, balance: income - expenses },
@@ -294,6 +286,30 @@
         return { success: true };
       }
 
+      if (method === 'apiDeletePaymentItem') {
+        const itemId = String(args[1] || '');
+        if (!/^[\w-]{1,80}$/.test(itemId)) throw new Error('Item pembayaran tidak valid.');
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const paymentRef = db.collection('payments').doc(itemId);
+        const payment = await paymentRef.get();
+        if (!payment.exists || payment.data().householdId !== householdId || payment.data().active === false) {
+          throw new Error('Item pembayaran tidak ditemukan.');
+        }
+        await paymentRef.update({ active: false });
+        return { success: true };
+      }
+
+      if (method === 'apiSetCharacter') {
+        const character = String(args[1] || '');
+        if (!memberCharacters.includes(character)) throw new Error('Karakter tidak tersedia.');
+        const memberships = await db.collection('memberships').where('userId', '==', user.uid).get();
+        const batch = db.batch();
+        batch.update(userRef, { character: character });
+        memberships.docs.forEach(document => batch.update(document.ref, { character: character }));
+        await batch.commit();
+        return { success: true };
+      }
+
       if (method === 'apiJoinHousehold') {
         const code = String(args[1] || '').trim().toUpperCase();
         if (!/^[A-Z0-9]{12}$/.test(code)) throw new Error('Kode rumah harus terdiri dari 12 karakter.');
@@ -307,7 +323,8 @@
           if (!profile.exists) throw new Error('Profil akun Firebase tidak ditemukan.');
           await membershipRef.set({
             householdId: householdId, userId: user.uid, name: profile.data().name,
-            email: user.email, role: 'member', inviteCode: code, createdAt: new Date().toISOString()
+            email: user.email, role: 'member', inviteCode: code, createdAt: new Date().toISOString(),
+            character: memberCharacters.includes(profile.data().character) ? profile.data().character : defaultMemberCharacter
           });
         }
         global.localStorage.setItem('kasku_active_household_' + user.uid, householdId);
@@ -321,7 +338,7 @@
         const batch = db.batch();
         const household = addHouseholdWrites(batch, {
           uid: user.uid, name: profile.data().name, email: user.email
-        }, name);
+        }, name, memberCharacters.includes(profile.data().character) ? profile.data().character : defaultMemberCharacter);
         await batch.commit();
         global.localStorage.setItem('kasku_active_household_' + user.uid, household.id);
         return { success: true };

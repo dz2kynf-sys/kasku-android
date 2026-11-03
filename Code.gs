@@ -1,11 +1,13 @@
 const SHEETS = {
   households: { name: 'Households', headers: ['id', 'name', 'inviteCode', 'createdAt'] },
-  memberships: { name: 'HouseholdMembers', headers: ['householdId', 'userId', 'role', 'createdAt'] },
+  memberships: { name: 'HouseholdMembers', headers: ['householdId', 'userId', 'role', 'createdAt', 'character'] },
   users: { name: 'Users', headers: ['id', 'name', 'email', 'salt', 'passwordHash', 'createdAt'] },
   transactions: { name: 'Transactions', headers: ['id', 'userId', 'type', 'amount', 'purpose', 'date', 'createdAt', 'householdId'] },
   payments: { name: 'PaymentItems', headers: ['id', 'name', 'amount', 'active', 'createdAt', 'householdId'] },
   checks: { name: 'PaymentChecks', headers: ['userId', 'itemId', 'month', 'checked', 'updatedAt', 'householdId'] }
 };
+const MEMBER_CHARACTERS = ['🙂', '😎', '🦊', '🐼', '🐱', '🐸', '🦉', '🐻', '🐧', '🐨'];
+const DEFAULT_MEMBER_CHARACTER = MEMBER_CHARACTERS[0];
 
 function doGet() {
   ensureDatabase_();
@@ -51,7 +53,7 @@ function apiSignup(name, email, password) {
       createdAt: new Date().toISOString()
     };
     sheet.appendRow([user.id, user.name, user.email, user.salt, user.passwordHash, user.createdAt]);
-    householdId = createHousehold_(user.name + ' Rumah', user.id);
+    householdId = createHousehold_(user.name + ' Rumah', user.id, DEFAULT_MEMBER_CHARACTER);
   } finally {
     lock.releaseLock();
   }
@@ -96,8 +98,12 @@ function apiGetData(token) {
     .filter(row => String(row[0]) === householdId);
   const members = householdMembers.map(row => {
     const member = usersById.get(String(row[1]));
-    return member ? { name: String(member[1]), email: String(member[2]), role: String(row[2]) } : null;
+    return member ? {
+      userId: String(row[1]), name: String(member[1]), email: String(member[2]), role: String(row[2]),
+      character: validMemberCharacter_(row[4]) ? String(row[4]) : DEFAULT_MEMBER_CHARACTER
+    } : null;
   }).filter(Boolean);
+  const currentMembership = householdMembers.find(row => String(row[1]) === user.id);
   const households = getHouseSheetData_('memberships')
     .filter(row => String(row[1]) === user.id)
     .map(row => getHousehold_(String(row[0])))
@@ -121,7 +127,11 @@ function apiGetData(token) {
   const income = transactions.reduce((sum, item) => item.type === 'income' ? sum + item.amount : sum, 0);
   const expenses = transactions.reduce((sum, item) => item.type === 'expense' ? sum + item.amount : sum, 0);
   return {
-    user: { name: user.name, email: user.email },
+    user: {
+      id: user.id, name: user.name, email: user.email,
+      character: currentMembership && validMemberCharacter_(currentMembership[4])
+        ? String(currentMembership[4]) : DEFAULT_MEMBER_CHARACTER
+    },
     household: household,
     households: households,
     members: members,
@@ -215,6 +225,52 @@ function apiAddPaymentItem(token, name, amount) {
   return { success: true };
 }
 
+function apiDeletePaymentItem(token, paymentId) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(paymentId || '');
+  if (!targetId || targetId.length > 80) throw new Error('Item pembayaran tidak valid.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('payments');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === targetId &&
+      String(row[5]) === household.id && row[3] !== false && String(row[3]).toLowerCase() !== 'false');
+    if (index < 1) throw new Error('Item pembayaran tidak ditemukan.');
+    sheet.getRange(index + 1, 4).setValue(false);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiSetCharacter(token, character) {
+  const user = requireSession_(token);
+  requireHousehold_(token, user);
+  const selected = String(character || '');
+  if (!validMemberCharacter_(selected)) throw new Error('Karakter tidak tersedia.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet_('memberships');
+    const rows = sheet.getDataRange().getValues();
+    let updated = false;
+    rows.forEach((row, index) => {
+      if (index > 0 && String(row[1]) === user.id) {
+        sheet.getRange(index + 1, 5).setValue(selected);
+        updated = true;
+      }
+    });
+    if (!updated) throw new Error('Keanggotaan rumah tidak ditemukan.');
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
 function apiJoinHousehold(token, inviteCode) {
   const user = requireSession_(token);
   const code = String(inviteCode || '').trim().toUpperCase();
@@ -232,7 +288,7 @@ function apiJoinHousehold(token, inviteCode) {
     const isMember = memberRows.slice(1).some(row =>
       String(row[0]) === householdId && String(row[1]) === user.id);
     if (!isMember) {
-      memberSheet.appendRow([householdId, user.id, 'member', new Date().toISOString()]);
+      memberSheet.appendRow([householdId, user.id, 'member', new Date().toISOString(), getUserCharacter_(user.id)]);
     }
     setSessionHousehold_(token, user, householdId);
   } finally {
@@ -248,7 +304,7 @@ function apiCreateHousehold(token, name) {
   lock.waitLock(10000);
   let householdId;
   try {
-    householdId = createHousehold_(householdName, user.id);
+    householdId = createHousehold_(householdName, user.id, getUserCharacter_(user.id));
     setSessionHousehold_(token, user, householdId);
   } finally {
     lock.releaseLock();
@@ -352,19 +408,25 @@ function setSessionHousehold_(token, user, householdId) {
   CacheService.getScriptCache().put('session:' + String(token), JSON.stringify(user), 21600);
 }
 
-function createHousehold_(name, userId) {
+function createHousehold_(name, userId, character) {
   const spreadsheet = ensureDatabase_();
   const householdId = Utilities.getUuid();
   const code = createInviteCode_(spreadsheet);
   const now = new Date().toISOString();
   spreadsheet.getSheetByName(SHEETS.households.name).appendRow([householdId, name, code, now]);
-  spreadsheet.getSheetByName(SHEETS.memberships.name).appendRow([householdId, userId, 'owner', now]);
-  const defaultPayments = ['Iuran rumah', 'Listrik', 'Air', 'Internet', 'Kebersihan']
-    .map(title => [Utilities.getUuid(), householdId, title]);
-  const paymentSheet = spreadsheet.getSheetByName(SHEETS.payments.name);
-  paymentSheet.getRange(paymentSheet.getLastRow() + 1, 1, defaultPayments.length, 6)
-    .setValues(defaultPayments.map(item => [item[0], item[2], 0, true, now, item[1]]));
+  spreadsheet.getSheetByName(SHEETS.memberships.name).appendRow([
+    householdId, userId, 'owner', now, validMemberCharacter_(character) ? character : DEFAULT_MEMBER_CHARACTER
+  ]);
   return householdId;
+}
+
+function getUserCharacter_(userId) {
+  const membership = getHouseSheetData_('memberships').find(row => String(row[1]) === userId);
+  return membership && validMemberCharacter_(membership[4]) ? String(membership[4]) : DEFAULT_MEMBER_CHARACTER;
+}
+
+function validMemberCharacter_(character) {
+  return MEMBER_CHARACTERS.indexOf(String(character || '')) !== -1;
 }
 
 function createInviteCode_(spreadsheet) {
@@ -412,7 +474,7 @@ function migrateLegacyData_(spreadsheet) {
     usedCodes.add(code);
     const now = new Date().toISOString();
     householdSheet.appendRow([householdId, String(row[1]) + ' Rumah', code, now]);
-    memberSheet.appendRow([householdId, userId, 'owner', now]);
+    memberSheet.appendRow([householdId, userId, 'owner', now, DEFAULT_MEMBER_CHARACTER]);
     houseByUser.set(userId, householdId);
   });
 
@@ -460,15 +522,6 @@ function migrateLegacyData_(spreadsheet) {
     paymentSheet.getRange(paymentSheet.getLastRow() + 1, 1, copies.length, 6).setValues(copies);
   }
 
-  const currentPayments = paymentSheet.getDataRange().getValues().slice(1);
-  const housesWithPayments = new Set(currentPayments.filter(row => row[5]).map(row => String(row[5])));
-  houses.forEach(householdId => {
-    if (housesWithPayments.has(householdId)) return;
-    const now = new Date().toISOString();
-    const defaults = ['Iuran rumah', 'Listrik', 'Air', 'Internet', 'Kebersihan']
-      .map(title => [Utilities.getUuid(), title, 0, true, now, householdId]);
-    paymentSheet.getRange(paymentSheet.getLastRow() + 1, 1, defaults.length, 6).setValues(defaults);
-  });
   properties.setProperty('KASKU_SCHEMA_VERSION', '2');
 }
 
