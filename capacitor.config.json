@@ -1,0 +1,8 @@
+{
+  "appId": "id.kasrumah.app",
+  "appName": "KasKU",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

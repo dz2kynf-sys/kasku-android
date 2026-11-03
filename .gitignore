@@ -1,0 +1,14 @@
+node_modules/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/google-services.json
+*.apk
+*.aab
+*.jks
+*.keystore
+.firebase/
+.env
+.env.*
+/IMG_20261103_163521.jpg

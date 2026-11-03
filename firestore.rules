@@ -1,0 +1,185 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(userId) {
+      return /databases/$(database)/documents/users/$(userId);
+    }
+
+    function householdPath(householdId) {
+      return /databases/$(database)/documents/households/$(householdId);
+    }
+
+    function membershipPath(householdId, userId) {
+      return /databases/$(database)/documents/memberships/$(householdId + '_' + userId);
+    }
+
+    function invitePath(code) {
+      return /databases/$(database)/documents/inviteCodes/$(code);
+    }
+
+    function isMember(householdId) {
+      return signedIn()
+        && householdId is string
+        && exists(membershipPath(householdId, request.auth.uid));
+    }
+
+    function isMemberAfter(householdId) {
+      return signedIn()
+        && householdId is string
+        && (exists(membershipPath(householdId, request.auth.uid))
+          || existsAfter(membershipPath(householdId, request.auth.uid)));
+    }
+
+    function validInvite(householdId, code) {
+      return code is string
+        && exists(invitePath(code))
+        && get(invitePath(code)).data.householdId == householdId;
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['name', 'email', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.createdAt is string;
+      allow update, delete: if false;
+    }
+
+    match /households/{householdId} {
+      allow get: if isMember(householdId);
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['id', 'name', 'inviteCode', 'createdBy', 'createdAt'])
+        && request.resource.data.id == householdId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.inviteCode is string
+        && existsAfter(membershipPath(householdId, request.auth.uid))
+        && getAfter(membershipPath(householdId, request.auth.uid)).data.role == 'owner'
+        && existsAfter(invitePath(request.resource.data.inviteCode))
+        && getAfter(invitePath(request.resource.data.inviteCode)).data.householdId == householdId;
+      allow update, delete: if false;
+    }
+
+    match /memberships/{membershipId} {
+      allow get: if signedIn()
+        && (membershipId.matches('^.+_' + request.auth.uid + '$')
+          || resource.data.userId == request.auth.uid
+          || isMember(resource.data.householdId));
+      allow list: if signedIn()
+        && (resource.data.userId == request.auth.uid || isMember(resource.data.householdId));
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'householdId', 'userId', 'name', 'email', 'role', 'inviteCode', 'createdAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.householdId is string
+        && membershipId == request.resource.data.householdId + '_' + request.auth.uid
+        && request.resource.data.name == getAfter(userPath(request.auth.uid)).data.name
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.createdAt is string
+        && (
+          (request.resource.data.role == 'owner'
+            && request.resource.data.inviteCode == getAfter(householdPath(request.resource.data.householdId)).data.inviteCode
+            && getAfter(householdPath(request.resource.data.householdId)).data.createdBy == request.auth.uid
+            && existsAfter(invitePath(request.resource.data.inviteCode))
+            && getAfter(invitePath(request.resource.data.inviteCode)).data.householdId == request.resource.data.householdId)
+          || (request.resource.data.role == 'member'
+            && validInvite(request.resource.data.householdId, request.resource.data.inviteCode))
+        );
+      allow update, delete: if false;
+    }
+
+    match /inviteCodes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['householdId', 'createdBy', 'createdAt'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt is string
+        && getAfter(householdPath(request.resource.data.householdId)).data.createdBy == request.auth.uid
+        && getAfter(householdPath(request.resource.data.householdId)).data.inviteCode == code
+        && getAfter(membershipPath(request.resource.data.householdId, request.auth.uid)).data.role == 'owner';
+      allow update, delete: if false;
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isMember(resource.data.householdId);
+      allow create: if signedIn()
+        && isMember(request.resource.data.householdId)
+        && request.resource.data.keys().hasOnly([
+          'id', 'userId', 'householdId', 'createdBy', 'type', 'amount', 'purpose', 'date', 'createdAt'
+        ])
+        && request.resource.data.id == transactionId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.createdBy is string
+        && request.resource.data.type in ['income', 'expense']
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0
+        && request.resource.data.amount <= 1000000000000
+        && request.resource.data.purpose is string
+        && request.resource.data.purpose.size() >= 2
+        && request.resource.data.purpose.size() <= 160
+        && request.resource.data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.createdAt is string;
+      allow update, delete: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isMember(resource.data.householdId);
+      allow create: if signedIn()
+        && isMemberAfter(request.resource.data.householdId)
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'amount', 'active', 'createdAt', 'householdId', 'createdBy'
+        ])
+        && request.resource.data.id == paymentId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 60
+        && request.resource.data.amount is int
+        && request.resource.data.amount >= 0
+        && request.resource.data.amount <= 1000000000000
+        && request.resource.data.active == true
+        && request.resource.data.createdAt is string;
+      allow update, delete: if false;
+    }
+
+    match /checks/{checkId} {
+      allow read: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && isMember(resource.data.householdId);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'userId', 'itemId', 'householdId', 'month', 'checked', 'updatedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && isMember(request.resource.data.householdId)
+        && request.resource.data.itemId is string
+        && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+        && request.resource.data.checked is bool
+        && request.resource.data.updatedAt is string
+        && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.householdId
+          == request.resource.data.householdId;
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && isMember(resource.data.householdId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'updatedAt'])
+        && request.resource.data.checked is bool
+        && request.resource.data.updatedAt is string;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

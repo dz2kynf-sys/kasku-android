@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KasKU</string>
+    <string name="title_activity_main">KasKU</string>
+    <string name="package_name">id.kasrumah.app</string>
+    <string name="custom_url_scheme">id.kasrumah.app</string>
+</resources>
