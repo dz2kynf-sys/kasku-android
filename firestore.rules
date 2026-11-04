@@ -272,21 +272,38 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/payments/$(request.resource.data.itemId)).data.amount
           == request.resource.data.amount;
       allow update: if signedIn()
-        && resource.data.userId == request.auth.uid
-        && resource.data.householdId == householdId
         && isMember(householdId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'amount', 'updatedAt'])
-        && request.resource.data.checked is bool
-        && request.resource.data.updatedAt is string
-        && request.resource.data.amount is int
-        && request.resource.data.amount >= 0
-        && request.resource.data.amount <= 1000000000000
-        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.active == true
-        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.householdId
-          == householdId
-        && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.amount
-          == request.resource.data.amount;
-      allow delete: if false;
+        && resource.data.householdId == householdId
+        && (
+          (resource.data.userId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checked', 'amount', 'updatedAt'])
+            && request.resource.data.checked is bool
+            && request.resource.data.updatedAt is string
+            && request.resource.data.amount is int
+            && request.resource.data.amount >= 0
+            && request.resource.data.amount <= 1000000000000
+            && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.active == true
+            && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.householdId
+              == householdId
+            && get(/databases/$(database)/documents/payments/$(resource.data.itemId)).data.amount
+              == request.resource.data.amount)
+          || (isOwner(householdId)
+            && resource.data.checked == true
+            && request.resource.data.checked == true
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.itemId == resource.data.itemId
+            && request.resource.data.month == resource.data.month
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['amount', 'updatedAt'])
+            && request.resource.data.amount is int
+            && request.resource.data.amount > 0
+            && request.resource.data.amount <= 1000000000000
+            && request.resource.data.updatedAt is string
+            && request.resource.data.updatedAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T12:00:00\\.000Z$'))
+        );
+      allow delete: if signedIn()
+        && isOwner(householdId)
+        && resource.data.householdId == householdId
+        && resource.data.checked == true;
     }
 
     match /{document=**} {

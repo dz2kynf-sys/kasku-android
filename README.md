@@ -55,7 +55,7 @@ Status pembayaran iuran terlihat oleh seluruh anggota rumah. Setiap anggota mena
 
 Transaksi manual dapat diedit atau dihapus oleh pembuatnya. Jenis dan nominal iuran dapat diedit untuk pembayaran berikutnya; pembayaran yang sudah ditandai lunas tetap memakai nominal yang tercatat saat itu.
 
-Anggota rumah dapat keluar dari rumah; pemilik dapat mengeluarkan anggota dan mengedit atau menghapus semua transaksi manual rumah. Pemilik tidak dapat keluar agar rumah tidak kehilangan pengelola. Anggota yang keluar atau dikeluarkan tetap dapat bergabung ke rumah lain atau membuat rumah baru.
+Anggota rumah dapat keluar dari rumah; pemilik dapat mengeluarkan anggota dan mengedit atau menghapus semua transaksi manual rumah maupun transaksi iuran. Mengedit transaksi iuran mengubah nominal/tanggal pembayaran tercatat; menghapusnya menandai pembayaran belum dibayar dan mengeluarkannya dari saldo. Pemilik tidak dapat keluar agar rumah tidak kehilangan pengelola. Anggota yang keluar atau dikeluarkan tetap dapat bergabung ke rumah lain atau membuat rumah baru.
 
 Firebase Auth dan Google Sheets adalah mode terpisah: halaman Apps Script tetap memakai spreadsheet, sedangkan APK dan server lokal memakai Firebase. Akun serta data lokal lama tidak otomatis dipindahkan ke Firebase; pengguna perlu membuat akun Firebase di aplikasi.
 

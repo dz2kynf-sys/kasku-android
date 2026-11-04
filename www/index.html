@@ -411,7 +411,7 @@
 
     <div id="transaction-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="transaction-modal-title">
       <form id="transaction-form" class="modal">
-        <div class="modal-head"><div><h2 id="transaction-modal-title">Catat transaksi</h2><p>Masukkan nominal dan tujuan penggunaan uang.</p></div><button class="modal-close" type="button" data-close="transaction-modal" aria-label="Tutup">×</button></div>
+        <div class="modal-head"><div><h2 id="transaction-modal-title">Catat transaksi</h2><p id="transaction-modal-copy">Masukkan nominal dan tujuan penggunaan uang.</p></div><button class="modal-close" type="button" data-close="transaction-modal" aria-label="Tutup">×</button></div>
         <div class="type-choice"><button class="type-btn active" type="button" data-type="expense">Uang keluar</button><button class="type-btn" type="button" data-type="income">Uang masuk</button></div>
         <div class="field"><label for="transaction-amount">Nominal (EGP)</label><input id="transaction-amount" type="number" min="1" step="1" max="1000000000000" required placeholder="Contoh: 150"></div>
         <div class="field"><label for="transaction-purpose">Keterangan / untuk apa</label><input id="transaction-purpose" maxlength="160" required placeholder="Contoh: Belanja kebutuhan dapur"></div>
@@ -738,6 +738,8 @@
                 id: 'payment-' + check.userId + '-' + check.itemId + '-' + check.month,
                 userId: check.userId,
                 householdId: householdId,
+                paymentItemId: check.itemId,
+                paymentMonth: check.month,
                 createdBy: memberNames.get(check.userId) || 'Anggota',
                 type: 'income',
                 amount: amount,
@@ -822,6 +824,32 @@
             saveLocalDatabase(database);
             return { success: true };
           }
+          if (method === 'apiUpdatePaymentTransaction') {
+            const transactionId = String(args[1] || '');
+            const payerId = String(args[2] || '');
+            const itemId = String(args[3] || '');
+            const month = String(args[4] || '');
+            const amount = Number(args[5]);
+            const date = String(args[6] || '');
+            const parsedDate = new Date(date + 'T00:00:00Z');
+            const isOwner = database.memberships.some(membership =>
+              membership.householdId === householdId && membership.userId === user.id && membership.role === 'owner'
+            );
+            const check = database.checks.find(item =>
+              item.userId === payerId && item.householdId === householdId &&
+              item.itemId === itemId && item.month === month && item.checked
+            );
+            if (!isOwner) throw new Error('Hanya pemilik rumah yang dapat mengedit transaksi iuran.');
+            if (!check || transactionId !== 'payment-' + payerId + '-' + itemId + '-' + month) {
+              throw new Error('Transaksi iuran tidak ditemukan.');
+            }
+            if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000000000) throw new Error('Nominal harus berupa jumlah EGP positif.');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw new Error('Tanggal transaksi tidak valid.');
+            check.amount = amount;
+            check.updatedAt = date + 'T12:00:00.000Z';
+            saveLocalDatabase(database);
+            return { success: true };
+          }
           if (method === 'apiDeleteTransaction') {
             const transactionId = String(args[1] || '');
             const index = database.transactions.findIndex(transaction =>
@@ -832,6 +860,26 @@
             );
             if (index < 0) throw new Error('Transaksi tidak ditemukan atau bukan milik akun ini.');
             database.transactions.splice(index, 1);
+            saveLocalDatabase(database);
+            return { success: true };
+          }
+          if (method === 'apiDeletePaymentTransaction') {
+            const transactionId = String(args[1] || '');
+            const payerId = String(args[2] || '');
+            const itemId = String(args[3] || '');
+            const month = String(args[4] || '');
+            const isOwner = database.memberships.some(membership =>
+              membership.householdId === householdId && membership.userId === user.id && membership.role === 'owner'
+            );
+            const index = database.checks.findIndex(check =>
+              check.userId === payerId && check.householdId === householdId &&
+              check.itemId === itemId && check.month === month && check.checked
+            );
+            if (!isOwner) throw new Error('Hanya pemilik rumah yang dapat menghapus transaksi iuran.');
+            if (index < 0 || transactionId !== 'payment-' + payerId + '-' + itemId + '-' + month) {
+              throw new Error('Transaksi iuran tidak ditemukan.');
+            }
+            database.checks.splice(index, 1);
             saveLocalDatabase(database);
             return { success: true };
           }
@@ -936,13 +984,19 @@
           state.transactionToEdit = item;
           $('transaction-form').reset();
           state.transactionType = item.type;
+          const isPaymentTransaction = Boolean(item.paymentItemId);
           document.querySelectorAll('[data-type]').forEach(button =>
             button.classList.toggle('active', button.dataset.type === state.transactionType)
           );
+          document.querySelectorAll('[data-type]').forEach(button => { button.disabled = isPaymentTransaction; });
           $('transaction-amount').value = item.amount;
           $('transaction-purpose').value = item.purpose;
+          $('transaction-purpose').disabled = isPaymentTransaction;
           $('transaction-date').value = item.date;
-          $('transaction-modal-title').textContent = 'Edit transaksi';
+          $('transaction-modal-title').textContent = isPaymentTransaction ? 'Edit transaksi iuran' : 'Edit transaksi';
+          $('transaction-modal-copy').textContent = isPaymentTransaction
+            ? 'Ubah nominal atau tanggal pembayaran ini. Pengubahan tidak mengubah jenis iuran.'
+            : 'Masukkan nominal dan tujuan penggunaan uang.';
           $('save-transaction').textContent = 'Simpan perubahan';
           displayError('transaction-error', '');
           $('transaction-modal').classList.remove('hidden');
@@ -993,26 +1047,30 @@
             amount.className = 'transaction-amount ' + (item.type === 'income' ? 'in' : 'out');
             amount.textContent = (item.type === 'income' ? '+' : '−') + money(item.amount);
             row.append(marker, info, amount);
-            const canManage = item.userId === state.data.user.id || state.data.user.role === 'owner';
-            if (canManage && !String(item.id).startsWith('payment-')) {
+            const isPaymentTransaction = Boolean(item.paymentItemId) || String(item.id).startsWith('payment-');
+            const canManage = state.data.user.role === 'owner' ||
+              (!isPaymentTransaction && item.userId === state.data.user.id);
+            if (canManage) {
               const actions = document.createElement('span');
               actions.className = 'transaction-actions';
               const editButton = document.createElement('button');
               editButton.type = 'button';
               editButton.className = 'row-action';
-              editButton.setAttribute('aria-label', 'Edit transaksi ' + item.purpose);
-              editButton.title = 'Edit transaksi';
+              editButton.setAttribute('aria-label', (isPaymentTransaction ? 'Edit transaksi iuran ' : 'Edit transaksi ') + item.purpose);
+              editButton.title = isPaymentTransaction ? 'Edit transaksi iuran' : 'Edit transaksi';
               editButton.innerHTML = icon('<path d="m14 5 5 5"/><path d="M4 20h4l11-11a2.1 2.1 0 0 0-4-4L4 16v4Z"/>');
               editButton.addEventListener('click', () => openTransactionEditor(item));
               const deleteButton = document.createElement('button');
               deleteButton.type = 'button';
               deleteButton.className = 'row-action danger';
-              deleteButton.setAttribute('aria-label', 'Hapus transaksi ' + item.purpose);
-              deleteButton.title = 'Hapus transaksi';
+              deleteButton.setAttribute('aria-label', (isPaymentTransaction ? 'Hapus transaksi iuran ' : 'Hapus transaksi ') + item.purpose);
+              deleteButton.title = isPaymentTransaction ? 'Hapus transaksi iuran' : 'Hapus transaksi';
               deleteButton.innerHTML = icon('<path d="M4 7h16"/><path d="M10 11v6m4-6v6"/><path d="m5 7 1 13h12l1-13"/><path d="M9 7V4h6v3"/>');
               deleteButton.addEventListener('click', () => {
                 state.transactionToDelete = item;
-                $('delete-transaction-message').textContent = 'Hapus transaksi "' + item.purpose + '" sebesar ' + money(item.amount) + '?';
+                $('delete-transaction-message').textContent = isPaymentTransaction
+                  ? 'Hapus pembayaran "' + item.purpose + '" sebesar ' + money(item.amount) + '? Pembayaran akan ditandai belum dibayar dan dikeluarkan dari saldo.'
+                  : 'Hapus transaksi "' + item.purpose + '" sebesar ' + money(item.amount) + '?';
                 displayError('delete-transaction-error', '');
                 $('delete-transaction-modal').classList.remove('hidden');
               });
@@ -1422,6 +1480,9 @@
         $('add-transaction').addEventListener('click', () => {
           state.transactionToEdit = null;
           $('transaction-form').reset();
+          document.querySelectorAll('[data-type]').forEach(button => { button.disabled = false; });
+          $('transaction-purpose').disabled = false;
+          $('transaction-modal-copy').textContent = 'Masukkan nominal dan tujuan penggunaan uang.';
           state.transactionType = 'expense';
           document.querySelectorAll('[data-type]').forEach(button => button.classList.toggle('active', button.dataset.type === state.transactionType));
           const today = new Date();
@@ -1443,10 +1504,18 @@
           displayError('transaction-error', '');
           try {
             if (state.transactionToEdit) {
-              await callApi('apiUpdateTransaction', [
-                state.token, state.transactionToEdit.id, state.transactionType, $('transaction-amount').value,
-                $('transaction-purpose').value, $('transaction-date').value
-              ]);
+              if (state.transactionToEdit.paymentItemId) {
+                await callApi('apiUpdatePaymentTransaction', [
+                  state.token, state.transactionToEdit.id, state.transactionToEdit.userId,
+                  state.transactionToEdit.paymentItemId, state.transactionToEdit.paymentMonth,
+                  $('transaction-amount').value, $('transaction-date').value
+                ]);
+              } else {
+                await callApi('apiUpdateTransaction', [
+                  state.token, state.transactionToEdit.id, state.transactionType, $('transaction-amount').value,
+                  $('transaction-purpose').value, $('transaction-date').value
+                ]);
+              }
             } else {
               await callApi('apiAddTransaction', [
                 state.token, state.transactionType, $('transaction-amount').value,
@@ -1472,7 +1541,13 @@
           button.disabled = true;
           displayError('delete-transaction-error', '');
           try {
-            await callApi('apiDeleteTransaction', [state.token, item.id]);
+            if (item.paymentItemId) {
+              await callApi('apiDeletePaymentTransaction', [
+                state.token, item.id, item.userId, item.paymentItemId, item.paymentMonth
+              ]);
+            } else {
+              await callApi('apiDeleteTransaction', [state.token, item.id]);
+            }
             state.transactionToDelete = null;
             $('delete-transaction-modal').classList.add('hidden');
             await refresh();

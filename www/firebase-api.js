@@ -225,7 +225,9 @@
             amount: amount,
             purpose: 'Iuran: ' + payment.name,
             date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : check.month + '-01',
-            createdAt: check.updatedAt || ''
+            createdAt: check.updatedAt || '',
+            paymentItemId: check.itemId,
+            paymentMonth: check.month
           });
         });
         transactions.sort((a, b) => b.date.localeCompare(a.date));
@@ -337,6 +339,65 @@
           throw new Error('Transaksi tidak ditemukan atau tidak dapat dihapus.');
         }
         await transactionRef.delete();
+        return { success: true };
+      }
+
+      if (method === 'apiDeletePaymentTransaction') {
+        const transactionId = String(args[1] || '');
+        const payerId = String(args[2] || '');
+        const itemId = String(args[3] || '');
+        const month = String(args[4] || '');
+        if (!/^[\w-]{1,80}$/.test(payerId) || !/^[\w-]{1,80}$/.test(itemId) ||
+            !/^\d{4}-\d{2}$/.test(month) || transactionId !== 'payment-' + payerId + '-' + itemId + '-' + month) {
+          throw new Error('Transaksi iuran tidak valid.');
+        }
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const membership = await db.collection('memberships').doc(householdId + '_' + user.uid).get();
+        if (!membership.exists || membership.data().role !== 'owner') {
+          throw new Error('Hanya pemilik rumah yang dapat menghapus transaksi iuran.');
+        }
+        const checkRef = db.collection('households').doc(householdId).collection('checks')
+          .doc(payerId + '_' + itemId + '_' + month);
+        const check = await checkRef.get();
+        if (!check.exists || check.data().householdId !== householdId || check.data().userId !== payerId ||
+            check.data().itemId !== itemId || check.data().month !== month || !check.data().checked) {
+          throw new Error('Transaksi iuran tidak ditemukan.');
+        }
+        await checkRef.delete();
+        return { success: true };
+      }
+
+      if (method === 'apiUpdatePaymentTransaction') {
+        const transactionId = String(args[1] || '');
+        const payerId = String(args[2] || '');
+        const itemId = String(args[3] || '');
+        const month = String(args[4] || '');
+        const amount = Number(args[5]);
+        const date = String(args[6] || '');
+        const parsedDate = new Date(date + 'T00:00:00Z');
+        if (!/^[\w-]{1,80}$/.test(payerId) || !/^[\w-]{1,80}$/.test(itemId) ||
+            !/^\d{4}-\d{2}$/.test(month) || transactionId !== 'payment-' + payerId + '-' + itemId + '-' + month) {
+          throw new Error('Transaksi iuran tidak valid.');
+        }
+        if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000000000) {
+          throw new Error('Nominal harus berupa jumlah EGP positif.');
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+          throw new Error('Tanggal transaksi tidak valid.');
+        }
+        const householdId = global.localStorage.getItem('kasku_active_household_' + user.uid);
+        const membership = await db.collection('memberships').doc(householdId + '_' + user.uid).get();
+        if (!membership.exists || membership.data().role !== 'owner') {
+          throw new Error('Hanya pemilik rumah yang dapat mengedit transaksi iuran.');
+        }
+        const checkRef = db.collection('households').doc(householdId).collection('checks')
+          .doc(payerId + '_' + itemId + '_' + month);
+        const check = await checkRef.get();
+        if (!check.exists || check.data().householdId !== householdId || check.data().userId !== payerId ||
+            check.data().itemId !== itemId || check.data().month !== month || !check.data().checked) {
+          throw new Error('Transaksi iuran tidak ditemukan.');
+        }
+        await checkRef.update({ amount: amount, updatedAt: date + 'T12:00:00.000Z' });
         return { success: true };
       }
 

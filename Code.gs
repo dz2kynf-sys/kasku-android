@@ -142,6 +142,8 @@ function apiGetData(token) {
     transactions.push({
       id: 'payment-' + String(row[0]) + '-' + String(row[1]) + '-' + String(row[2]),
       userId: String(row[0]),
+      paymentItemId: String(row[1]),
+      paymentMonth: String(row[2]),
       type: 'income',
       amount: amount,
       purpose: 'Iuran: ' + String(payment[1]),
@@ -297,6 +299,83 @@ function apiTogglePayment(token, itemId, month, checked) {
     } else {
       sheet.appendRow(values);
     }
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiUpdatePaymentTransaction(token, transactionId, payerId, itemId, month, amount, date) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(transactionId || '');
+  const targetPayerId = String(payerId || '');
+  const paymentId = String(itemId || '');
+  const targetMonth = String(month || '');
+  const numericAmount = Number(amount);
+  const transactionDate = String(date || '');
+  const parsedDate = new Date(transactionDate + 'T12:00:00Z');
+  if (!/^[\w-]{1,80}$/.test(targetPayerId) || !/^[\w-]{1,80}$/.test(paymentId) ||
+      !/^\d{4}-\d{2}$/.test(targetMonth) ||
+      targetId !== 'payment-' + targetPayerId + '-' + paymentId + '-' + targetMonth) {
+    throw new Error('Transaksi iuran tidak valid.');
+  }
+  if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0 || numericAmount > 1000000000000) {
+    throw new Error('Nominal harus berupa jumlah EGP positif.');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(transactionDate) || isNaN(parsedDate.getTime()) ||
+      parsedDate.toISOString().slice(0, 10) !== transactionDate) {
+    throw new Error('Tanggal transaksi tidak valid.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (!isHouseholdOwner_(household.id, user.id)) {
+      throw new Error('Hanya pemilik rumah yang dapat mengedit transaksi iuran.');
+    }
+    const sheet = getSheet_('checks');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 &&
+      String(row[0]) === targetPayerId && String(row[1]) === paymentId &&
+      String(row[2]) === targetMonth && String(row[5]) === household.id &&
+      (row[3] === true || String(row[3]).toLowerCase() === 'true'));
+    if (index < 1) throw new Error('Transaksi iuran tidak ditemukan.');
+    sheet.getRange(index + 1, 5).setValue(transactionDate + 'T12:00:00.000Z');
+    sheet.getRange(index + 1, 7).setValue(numericAmount);
+  } finally {
+    lock.releaseLock();
+  }
+  return { success: true };
+}
+
+function apiDeletePaymentTransaction(token, transactionId, payerId, itemId, month) {
+  const user = requireSession_(token);
+  const household = requireHousehold_(token, user);
+  const targetId = String(transactionId || '');
+  const targetPayerId = String(payerId || '');
+  const paymentId = String(itemId || '');
+  const targetMonth = String(month || '');
+  if (!/^[\w-]{1,80}$/.test(targetPayerId) || !/^[\w-]{1,80}$/.test(paymentId) ||
+      !/^\d{4}-\d{2}$/.test(targetMonth) ||
+      targetId !== 'payment-' + targetPayerId + '-' + paymentId + '-' + targetMonth) {
+    throw new Error('Transaksi iuran tidak valid.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (!isHouseholdOwner_(household.id, user.id)) {
+      throw new Error('Hanya pemilik rumah yang dapat menghapus transaksi iuran.');
+    }
+    const sheet = getSheet_('checks');
+    const rows = sheet.getDataRange().getValues();
+    const index = rows.findIndex((row, i) => i > 0 &&
+      String(row[0]) === targetPayerId && String(row[1]) === paymentId &&
+      String(row[2]) === targetMonth && String(row[5]) === household.id &&
+      (row[3] === true || String(row[3]).toLowerCase() === 'true'));
+    if (index < 1) throw new Error('Transaksi iuran tidak ditemukan.');
+    sheet.deleteRow(index + 1);
   } finally {
     lock.releaseLock();
   }
